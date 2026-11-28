@@ -4,6 +4,7 @@ use super::{
     AuthoredSql, BTreeMap, BTreeSet, CatalogIr, Column, Constraint, ConstraintType,
     GenerationInput, QUERY_LIMIT, Table, column, contains_schema_qualified_reference,
     custom_operation_constraint_origin, logged_history_tables, relation, server_owned_fields,
+    stamp_principal_key_column,
 };
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::FilterMatch;
@@ -470,7 +471,8 @@ fn require_column(
 /// Refuse a record-history declaration that the relation cannot carry.
 ///
 /// Every selected column exists as a non-null `timestamptz` time or `uuid`
-/// actor. Every reserved-name column is selected, except a base column under
+/// actor. Each selected actor references `platform."user" (id)`. Every
+/// reserved-name column is selected, except a base column under
 /// an overlay, which the relation owner's declaration selects. A relation that
 /// keeps a log has a primary key, because each entry keys the row by it.
 fn validate_audit_log_columns(
@@ -498,6 +500,9 @@ fn validate_audit_log_columns(
             selection.as_str(),
             ty,
         )?;
+        if ty == SqlValueType::Uuid {
+            require_stamp_principal_key(&context, table, selection.as_str())?;
+        }
     }
     for reserved in RecordHistoryColumn::ALL {
         let name = reserved.as_str();
@@ -562,6 +567,9 @@ fn validate_tombstone_columns(
                     format!("{}.{}.{name}", table.schema(), table.name()),
                 ));
             }
+            if reserved == TombstoneColumn::DeletedBy {
+                require_stamp_principal_key(&context, table, name)?;
+            }
         }
         return Ok(());
     }
@@ -578,6 +586,25 @@ fn validate_tombstone_columns(
         }
     }
     Ok(())
+}
+
+fn require_stamp_principal_key(
+    context: &str,
+    table: &Table,
+    name: &str,
+) -> Result<(), GenerateError> {
+    if table
+        .constraints()
+        .iter()
+        .any(|constraint| stamp_principal_key_column(constraint) == Some(name))
+    {
+        return Ok(());
+    }
+    Err(GenerateError::for_object(
+        GenerateErrorType::InvalidModel,
+        format!("{context} requires {name} to reference platform.\"user\" (id) ON DELETE RESTRICT"),
+        format!("{}.{}.{name}", table.schema(), table.name()),
+    ))
 }
 
 fn validate_query(

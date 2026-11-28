@@ -212,15 +212,19 @@ async fn views_preserve_origins_expansion_dependencies_and_set_returning_functio
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn selected_relations_retain_outgoing_and_incoming_foreign_keys() {
-    use wamn_schema::ir::ConstraintType;
+    use wamn_schema::ir::{ConstraintType, ForeignKeyAction};
     let server = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
     let database = server.create_database("tests").await.unwrap();
     let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     sqlx::raw_sql(AssertSqlSafe("CREATE SCHEMA app;
+        CREATE SCHEMA platform;
+        CREATE TABLE platform.\"user\" (id uuid PRIMARY KEY);
         CREATE TABLE app.parent (id bigint PRIMARY KEY, unrelated date);
-        CREATE TABLE app.selected (id bigint CONSTRAINT selected_id_pkey PRIMARY KEY, parent_id bigint REFERENCES app.parent(id));
+        CREATE TABLE app.selected (id bigint CONSTRAINT selected_id_pkey PRIMARY KEY,
+            parent_id bigint REFERENCES app.parent(id),
+            created_by uuid NOT NULL REFERENCES platform.\"user\" (id) ON DELETE RESTRICT);
         CREATE TABLE app.child (id bigint, selected_id bigint REFERENCES app.selected(id), unrelated date)".to_owned()).into_sql_str()).execute(&pool).await.unwrap();
     let catalog =
         read_catalog_excluding_relations(&pool, &["app"], &[("app", "parent"), ("app", "child")])
@@ -232,9 +236,17 @@ async fn selected_relations_retain_outgoing_and_incoming_foreign_keys() {
             .iter()
             .any(|constraint| matches!(
                 constraint.constraint_type(),
-                ConstraintType::ForeignKey { .. }
+                ConstraintType::ForeignKey { referenced_table, .. }
+                    if referenced_table.as_ref() == "parent"
             ))
     );
+    assert!(catalog.tables()[0].constraints().iter().any(|constraint| {
+        matches!(constraint.constraint_type(), ConstraintType::ForeignKey {
+            columns, referenced_schema, referenced_table, on_delete: ForeignKeyAction::Restrict, ..
+        } if referenced_schema.as_ref() == "platform" && referenced_table.as_ref() == "user"
+            && matches!(columns.as_ref(), [column]
+                if column.column() == "created_by" && column.referenced_column() == "id"))
+    }));
     assert!(!catalog.referencing_constraints().is_empty());
     assert!(
         catalog

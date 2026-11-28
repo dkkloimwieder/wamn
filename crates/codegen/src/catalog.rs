@@ -1253,7 +1253,7 @@ fn platform_reference_is_permitted(
     attributes: &BTreeMap<AttributeKey, String>,
 ) -> bool {
     schema == "platform"
-        && matches!(table, "external_system" | "file")
+        && matches!(table, "external_system" | "file" | "user")
         && columns.len() == 1
         && attributes
             .get(&(schema.to_owned(), table.to_owned(), columns[0]))
@@ -1592,7 +1592,7 @@ pub async fn read_catalog_excluding_relations(
         );
     }
     // These platform identity keys are public references outside application schemas.
-    for row in sqlx::query(AssertSqlSafe(("SELECT c.relname::text, a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname IN ('external_system', 'file') AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped").to_owned()).into_sql_str()).fetch_all(client).await.map_err(|error| database_error("read the platform reference keys", error))? {
+    for row in sqlx::query(AssertSqlSafe(("SELECT c.relname::text, a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname IN ('external_system', 'file', 'user') AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped").to_owned()).into_sql_str()).fetch_all(client).await.map_err(|error| database_error("read the platform reference keys", error))? {
         attributes.insert(("platform".into(), row.get(0), row.get(1)), "id".into());
     }
     let all_constraints = load_constraints(client, &schemas).await?;
@@ -1688,9 +1688,9 @@ mod file_reference_tests {
     use super::*;
 
     #[test]
-    fn only_file_and_external_system_identity_keys_are_public_references() {
+    fn platform_tables_expose_only_approved_identity_keys() {
         let mut attributes = BTreeMap::new();
-        for table in ["file", "external_system", "connection"] {
+        for table in ["file", "external_system", "user", "connection"] {
             attributes.insert(
                 ("platform".to_owned(), table.to_owned(), 1),
                 "id".to_owned(),
@@ -1700,7 +1700,7 @@ mod file_reference_tests {
                 "name".to_owned(),
             );
         }
-        for table in ["file", "external_system"] {
+        for table in ["file", "external_system", "user"] {
             assert!(platform_reference_is_permitted(
                 "platform",
                 table,

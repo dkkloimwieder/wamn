@@ -9,13 +9,13 @@ use wamn_package::manifest::{
     CrudAction, resolve_operation_reference, validate_operation_vocabulary,
 };
 use wamn_scalar::SqlValueType;
-use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, ConstraintType, Table};
 
 #[path = "support/generation.rs"]
 mod support;
 use support::{
-    QUERY_SOURCES, catalog, description_json, manifest, parsed_manifest, projection_operation,
-    published_input, rebuilt_table, replacing_table, run, table,
+    QUERY_SOURCES, catalog, description_json, manifest, parsed_manifest, platform_user_key,
+    projection_operation, published_input, rebuilt_table, replacing_table, run, table,
 };
 
 async fn query_fixture(pool: &sqlx::PgPool) {
@@ -797,7 +797,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 "id",
                 SqlValueType::Uuid,
                 false,
-                Some(ColumnDefault::GenRandomUuid),
+                Some(ColumnDefault::Uuidv7),
                 None,
             ),
             Column::new("sku", SqlValueType::Text, false, None, None),
@@ -1044,6 +1044,13 @@ fn a_create_that_declares_a_claim_refuses() {
 
 /// The support catalog, with each named column added to `gadget`.
 fn catalog_with_columns(columns: &[(&str, SqlValueType, bool)]) -> CatalogIr {
+    catalog_with_columns_and_keys(columns, &[])
+}
+
+fn catalog_with_columns_and_keys(
+    columns: &[(&str, SqlValueType, bool)],
+    keys: &[&str],
+) -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     let stamped = rebuilt_table(
@@ -1058,18 +1065,25 @@ fn catalog_with_columns(columns: &[(&str, SqlValueType, bool)]) -> CatalogIr {
                     .map(|(name, ty, nullable)| Column::new(*name, *ty, *nullable, None, None)),
             )
             .collect(),
-        gadget.constraints().to_vec(),
+        gadget
+            .constraints()
+            .iter()
+            .cloned()
+            .chain(keys.iter().map(|field| platform_user_key("gadget", field)))
+            .collect(),
     );
     replacing_table(&base, stamped)
 }
 
 fn all_stamps_catalog() -> CatalogIr {
-    catalog_with_columns(&[
-        ("created_by", SqlValueType::Uuid, false),
-        ("updated_at", SqlValueType::Timestamptz, false),
-        ("updated_by", SqlValueType::Uuid, false),
-    ])
+    catalog_with_columns_and_keys(&AUDIT_ACTOR_COLUMNS, &["created_by", "updated_by"])
 }
+
+const AUDIT_ACTOR_COLUMNS: [(&str, SqlValueType, bool); 3] = [
+    ("created_by", SqlValueType::Uuid, false),
+    ("updated_at", SqlValueType::Timestamptz, false),
+    ("updated_by", SqlValueType::Uuid, false),
+];
 
 fn with_audit_log(columns: &Value, retention: &str) -> Value {
     let mut manifest = manifest();
@@ -1148,10 +1162,64 @@ fn deleting_manifest(mode: &str) -> Value {
 }
 
 fn tombstone_catalog() -> CatalogIr {
-    catalog_with_columns(&[
-        ("deleted_at", SqlValueType::Timestamptz, true),
-        ("deleted_by", SqlValueType::Uuid, true),
-    ])
+    catalog_with_columns_and_keys(&TOMBSTONE_COLUMNS, &["deleted_by"])
+}
+
+const TOMBSTONE_COLUMNS: [(&str, SqlValueType, bool); 2] = [
+    ("deleted_at", SqlValueType::Timestamptz, true),
+    ("deleted_by", SqlValueType::Uuid, true),
+];
+
+#[test]
+fn a_tombstone_requires_its_principal_key() {
+    let refusal = run(
+        &catalog_with_columns(&TOMBSTONE_COLUMNS),
+        &deleting_manifest("tombstone"),
+        &QUERY_SOURCES,
+    )
+    .unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+    assert_eq!(refusal.object(), Some("inventory.gadget.deleted_by"));
+}
+
+#[test]
+fn generated_errors_exclude_only_stamp_principal_keys() {
+    let columns = [AUDIT_ACTOR_COLUMNS.as_slice(), TOMBSTONE_COLUMNS.as_slice()].concat();
+    let catalog = catalog_with_columns_and_keys(
+        &columns,
+        &["created_by", "updated_by", "deleted_by", "stock_id"],
+    );
+    let stock_key = table(&catalog, "gadget")
+        .constraints()
+        .iter()
+        .find(|constraint| {
+            matches!(constraint.constraint_type(), ConstraintType::ForeignKey { columns, .. }
+                if columns.iter().any(|column| column.column() == "stock_id"))
+        })
+        .unwrap();
+    let mut manifest = deleting_manifest("tombstone");
+    let model = &mut manifest["models"]["gadget"];
+    model["audit_log"]["columns"] = json!(ALL_STAMP_COLUMNS);
+    model["operations"]["create"] = json!({
+        "permission": "gadget.create",
+        "writable_fields": ["stock_id"],
+        "result": "one"
+    });
+    let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+    for operation in ["gadget.create", "gadget.update", "gadget.delete"] {
+        let foreign_keys = package.operations()[operation].errors["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case["literal"] == "foreign_key_violation")
+            .map(|case| case["constraint"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        if operation == "gadget.delete" {
+            assert!(foreign_keys.is_empty(), "{operation}: {foreign_keys:?}");
+        } else {
+            assert_eq!(foreign_keys, [stock_key.name()], "{operation}");
+        }
+    }
 }
 
 /// Authored commands declare their delete and every column that the SQL reads.
@@ -1219,15 +1287,16 @@ fn a_delete_mode_travels_with_its_owner_and_its_marker_columns() {
         GenerateErrorType::InvalidModel,
     );
 
-    for marker in ["deleted_at", "deleted_by"] {
-        let ty = if marker == "deleted_at" {
-            SqlValueType::Timestamptz
+    for (marker, ty, nullable) in TOMBSTONE_COLUMNS {
+        let keys = [marker];
+        let keys = if ty == SqlValueType::Uuid {
+            &keys[..]
         } else {
-            SqlValueType::Uuid
+            &[]
         };
         assert_eq!(
             run(
-                &catalog_with_columns(&[(marker, ty, true)]),
+                &catalog_with_columns_and_keys(&[(marker, ty, nullable)], keys),
                 &manifest(),
                 &QUERY_SOURCES,
             )
@@ -1326,6 +1395,18 @@ fn audit_log_columns_refuse_against_the_catalog() {
             "created_by",
         ),
         (
+            "a selected created_by with no principal key",
+            catalog_with_columns_and_keys(&AUDIT_ACTOR_COLUMNS, &["updated_by"]),
+            all_stamps_manifest(),
+            "created_by",
+        ),
+        (
+            "a selected updated_by with no principal key",
+            catalog_with_columns_and_keys(&AUDIT_ACTOR_COLUMNS, &["created_by"]),
+            all_stamps_manifest(),
+            "updated_by",
+        ),
+        (
             "a nullable selected column",
             catalog_with_columns(&[("updated_at", SqlValueType::Timestamptz, true)]),
             timestamps_only.clone(),
@@ -1345,7 +1426,10 @@ fn audit_log_columns_refuse_against_the_catalog() {
         ),
         (
             "an overlay-added reserved-name column",
-            catalog_with_columns(&[("updated_by", SqlValueType::Uuid, false)]),
+            catalog_with_columns_and_keys(
+                &[("updated_by", SqlValueType::Uuid, false)],
+                &["updated_by"],
+            ),
             overlay_added,
             "updated_by",
         ),

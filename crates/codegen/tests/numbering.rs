@@ -4,6 +4,7 @@
 
 use serde_json::{Value, json};
 use wamn_codegen::GeneratedPackage;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
 use wamn_scalar::SqlValueType;
 use wamn_schema::ir::{CatalogIr, Column, Constraint};
@@ -15,7 +16,8 @@ use wamn_schema::ir::{CatalogIr, Column, Constraint};
 )]
 mod support;
 use support::{
-    QUERY_SOURCES, catalog, manifest, rebuilt_table, replacing_table, run, run_with_bases, table,
+    QUERY_SOURCES, catalog, manifest, platform_user_key, rebuilt_table, replacing_table, run,
+    run_with_bases, table,
 };
 
 /// The gadget fixture with a numbered `part_code`, keyed per stock, and a
@@ -43,10 +45,11 @@ fn actor_catalog(name: &str, ty: SqlValueType) -> CatalogIr {
     let gadget = table(&base, "gadget");
     let mut columns = gadget.columns().to_vec();
     columns.push(Column::new(name, ty, false, None, None));
-    replacing_table(
-        &base,
-        rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
-    )
+    let mut constraints = gadget.constraints().to_vec();
+    if matches!(name, "created_by" | "updated_by") && ty == SqlValueType::Uuid {
+        constraints.push(platform_user_key(gadget.name(), name));
+    }
+    replacing_table(&base, rebuilt_table(gadget, columns, constraints))
 }
 
 /// The gadget catalog with the two stamp actors, `created_by` and
@@ -55,8 +58,10 @@ fn stamped_catalog() -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     let mut columns = gadget.columns().to_vec();
+    let mut constraints = gadget.constraints().to_vec();
     for name in ["created_by", "updated_by"] {
         columns.push(Column::new(name, SqlValueType::Uuid, false, None, None));
+        constraints.push(platform_user_key(gadget.name(), name));
     }
     columns.push(Column::new(
         "updated_at",
@@ -65,10 +70,7 @@ fn stamped_catalog() -> CatalogIr {
         None,
         None,
     ));
-    replacing_table(
-        &base,
-        rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
-    )
+    replacing_table(&base, rebuilt_table(gadget, columns, constraints))
 }
 
 /// The gadget catalog with an integer identity key.
@@ -533,19 +535,26 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
         )
         .unwrap();
         let (_server, database) = project_database().await;
-        sqlx::raw_sql("CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
-            id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
+        sqlx::raw_sql(
+            "CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
+            id uuid PRIMARY KEY DEFAULT uuidv7(), part_code text UNIQUE NOT NULL,
             stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
             row_version bigint NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now(),
-            created_by uuid NOT NULL, updated_by uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+            created_by uuid NOT NULL REFERENCES platform.\"user\" (id) ON DELETE RESTRICT,
+            updated_by uuid NOT NULL REFERENCES platform.\"user\" (id) ON DELETE RESTRICT,
+            updated_at timestamptz NOT NULL DEFAULT now());
             GRANT USAGE ON SCHEMA inventory TO wamn_app;
-            GRANT SELECT ON inventory.gadget TO wamn_app;").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
+            GRANT SELECT ON inventory.gadget TO wamn_app;",
+        )
+        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+        .await
+        .unwrap();
         sqlx::raw_sql("GRANT INSERT, UPDATE ON inventory.gadget TO wamn_app")
             .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
             .await
             .unwrap();
-        let first = "00000000-0000-4000-8000-000000000001";
-        let second = "00000000-0000-4000-8000-000000000002";
+        let first = uuid::Uuid::from(PlatformComponent::ApplyPackage.principal_id());
+        let second = uuid::Uuid::from(PlatformComponent::Executor.principal_id());
         let stock = "00000000-0000-4000-8000-000000000003";
         let id = "00000000-0000-4000-8000-000000000004";
         let create = text(&package, "generated/sql/gadget/create.sql");
@@ -570,10 +579,10 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
                 .await
                 .unwrap()
         };
-        let first_actor = uuid::Uuid::parse_str(first).unwrap();
-        assert_eq!(actors().await, (first_actor, first_actor));
+        assert_eq!(actors().await, (first, first));
         // Both an omitted field and the same supplied value leave the actor alone.
-        for (present, value) in [(false, stock), (true, stock), (true, second)] {
+        let other_stock = "00000000-0000-4000-8000-000000000002";
+        for (present, value) in [(false, stock), (true, stock), (true, other_stock)] {
             let revision: i64 = sqlx::query_scalar("SELECT row_version FROM inventory.gadget")
                 .fetch_one(&mut observer)
                 .await
@@ -588,10 +597,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             .unwrap();
             assert_eq!(
                 actors().await,
-                (
-                    first_actor,
-                    uuid::Uuid::parse_str(if value == stock { first } else { second }).unwrap()
-                )
+                (first, if value == stock { first } else { second })
             );
         }
     }

@@ -487,7 +487,10 @@ async fn overlay_builds_inherit_owner_fields_from_compiled_manifests() {
     );
     fs::write(
         workspace.package().join("migrations/9999_actor.sql"),
-        "ALTER TABLE inventory.widget ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN updated_by uuid NOT NULL;",
+        "ALTER TABLE inventory.widget
+             ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             ADD COLUMN updated_by uuid NOT NULL CONSTRAINT widget_updated_by_fkey
+                 REFERENCES platform.\"user\" (id) ON DELETE RESTRICT;",
     )
     .unwrap();
     let output = workspace.root.join("selected-output");

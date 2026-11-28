@@ -629,10 +629,11 @@ fn operation_error_details(
 /// one, and PostgreSQL names THAT constraint in its 23503.
 ///
 /// A tombstone is an UPDATE of its two marker columns, so it runs through the
-/// same filter every other update runs through. The answer is usually empty,
-/// but it is DERIVED rather than assumed: a unique or foreign key that names a
-/// marker column is reported like any other. It writes no referenced column, so
-/// no inbound key fires.
+/// same filter every other update runs through. It writes no referenced
+/// column, so no inbound key fires.
+///
+/// Stamp principal keys guard values that the platform supplies. Their
+/// violations surface as internal errors.
 ///
 /// This set predicts CONSTRAINTS only. A trigger guard, such as the immutable
 /// row guards in `deploy/sql`, refuses a write without any constraint, and no
@@ -652,6 +653,7 @@ fn operation_constraints<'a>(
                 table
                     .constraints()
                     .iter()
+                    .filter(|constraint| stamp_principal_key_column(constraint).is_none())
                     .filter(|constraint| update_can_violate(constraint.constraint_type(), &marker))
                     .collect()
             }
@@ -664,6 +666,7 @@ fn operation_constraints<'a>(
     table
         .constraints()
         .iter()
+        .filter(|constraint| stamp_principal_key_column(constraint).is_none())
         .filter(|constraint| {
             action != CrudAction::Update
                 || update_can_violate(constraint.constraint_type(), &operation.writable_fields)
@@ -672,6 +675,28 @@ fn operation_constraints<'a>(
         // CHECK that guards it is never the answer.
         .filter(|constraint| !guards_min_length(constraint, model))
         .collect()
+}
+
+fn stamp_principal_key_column(constraint: &Constraint) -> Option<&str> {
+    let ConstraintType::ForeignKey {
+        columns,
+        referenced_schema,
+        referenced_table,
+        on_delete: ForeignKeyAction::Restrict,
+        ..
+    } = constraint.constraint_type()
+    else {
+        return None;
+    };
+    let [column] = columns.as_ref() else {
+        return None;
+    };
+    let name = column.column();
+    (referenced_schema.as_ref() == "platform"
+        && referenced_table.as_ref() == "user"
+        && column.referenced_column() == "id"
+        && matches!(name, "created_by" | "updated_by" | "deleted_by"))
+    .then_some(name)
 }
 
 /// The CHECK expression that guards a minimum length, as PostgreSQL prints it.
@@ -698,6 +723,7 @@ fn inbound_foreign_keys<'a>(catalog: &'a CatalogIr, table: &'a Table) -> Vec<&'a
         .iter()
         .flat_map(Table::constraints)
         .chain(catalog.referencing_constraints())
+        .filter(|constraint| stamp_principal_key_column(constraint).is_none())
         .filter(|constraint| match constraint.constraint_type() {
             ConstraintType::ForeignKey {
                 referenced_schema,
@@ -1122,9 +1148,10 @@ fn omission_refused(column: &Column) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Column, Constraint, Table, model_enum_fields};
+    use super::{Column, Constraint, ForeignKeyAction, Table, model_enum_fields};
     use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
     use wamn_package::manifest::ModelDeclaration;
+    use wamn_package::schema::ForeignKeyColumn;
     use wamn_scalar::SqlValueType;
 
     #[test]
@@ -1164,7 +1191,18 @@ mod tests {
                 Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
                 Column::new("created_by", SqlValueType::Uuid, false, None, None),
             ],
-            vec![Constraint::primary_key("record_id_pkey", ["id"]).unwrap()],
+            vec![
+                Constraint::primary_key("record_id_pkey", ["id"]).unwrap(),
+                Constraint::foreign_key(
+                    "record_created_by_fkey",
+                    vec![ForeignKeyColumn::new("created_by", "id")],
+                    "platform",
+                    "user",
+                    ForeignKeyAction::NoAction,
+                    ForeignKeyAction::Restrict,
+                )
+                .unwrap(),
+            ],
             Vec::new(),
         )]);
         let bytes = super::derive_manifest(&catalog, &authored, &[], &[base]).unwrap();

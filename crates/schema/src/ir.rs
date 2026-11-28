@@ -373,13 +373,13 @@ impl Column {
 /// is the package's own, and R-A already rules that package-local values expand
 /// under the validator.
 ///
-/// The allowlist therefore closes over forms. What it still refuses is
-/// unchanged in type: an expression, a function call other than the two named
-/// here, and a literal whose type is not the column's.
+/// The allowlist refuses other expressions and function calls. It also
+/// refuses literals whose type differs from the column's type.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ColumnDefault {
     GenRandomUuid,
+    Uuidv7,
     CurrentTimestamp,
     Text {
         value: Box<str>,
@@ -837,6 +837,7 @@ pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(SqlValueType, &str, ColumnDefau
         "gen_random_uuid()",
         ColumnDefault::GenRandomUuid,
     ),
+    (SqlValueType::Uuid, "uuidv7()", ColumnDefault::Uuidv7),
     (
         SqlValueType::Timestamptz,
         "CURRENT_TIMESTAMP",
@@ -846,7 +847,7 @@ pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(SqlValueType, &str, ColumnDefau
 
 /// Normalize an admitted `pg_get_expr` default to its semantic IR variant.
 ///
-/// Two server functions are admitted by name, each for the one type it serves.
+/// The allowlist admits each server expression for the one type it serves.
 /// Everything else must be a LITERAL of the column's own type, optionally cast
 /// to that same type. An expression, any other function call, and a literal of
 /// a different type all refuse, which is the whole wall this allowlist keeps.

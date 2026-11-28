@@ -3,8 +3,9 @@ use wamn_codegen::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
 use wamn_component_policy::PackageManifest;
+use wamn_package::schema::ForeignKeyColumn;
 use wamn_scalar::SqlValueType;
-use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, ForeignKeyAction, Table};
 
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(
@@ -42,7 +43,7 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
                 "id",
                 SqlValueType::Uuid,
                 false,
-                Some(ColumnDefault::GenRandomUuid),
+                Some(ColumnDefault::Uuidv7),
                 None,
             ),
             Column::new("part_code", SqlValueType::Text, false, None, None),
@@ -91,6 +92,18 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
         ));
     }
     CatalogIr::new(tables)
+}
+
+pub(super) fn platform_user_key(table: &str, field: &str) -> Constraint {
+    Constraint::foreign_key(
+        format!("{table}_{field}_fkey"),
+        vec![ForeignKeyColumn::new(field, "id")],
+        "platform",
+        "user",
+        ForeignKeyAction::NoAction,
+        ForeignKeyAction::Restrict,
+    )
+    .unwrap()
 }
 
 pub(super) fn projection_operation() -> Value {

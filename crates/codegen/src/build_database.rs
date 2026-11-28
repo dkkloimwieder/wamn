@@ -143,18 +143,19 @@ pub async fn migrate(
         sqlx::raw_sql(
             "CREATE SCHEMA IF NOT EXISTS platform;
              CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY);
-             CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)",
+             CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY);
+             CREATE TABLE IF NOT EXISTS platform.\"user\" (id uuid PRIMARY KEY)",
         )
         .execute(&client)
         .await
         .context("create platform references for package verification")?;
         // Platform helpers precede generated SQL in every verification database.
         create_history_tables(&client, history).await?;
+        register_verification_principal(&client).await?;
         for (index, directory) in directories.iter().enumerate() {
             let mut migrator = migrator(directory).await?;
             migrator.dangerous_set_table_name(format!("_sqlx_verification_{index}"));
             let mut connection = connect(database_url).await?;
-            register_verification_principal(&mut connection).await?;
             migrator
                 .run_direct(None, &mut connection, false)
                 .await
@@ -360,12 +361,16 @@ async fn create_history_tables(client: &sqlx::PgPool, history: &[HistoryTable<'_
     Ok(())
 }
 
-async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
+async fn register_verification_principal(client: &sqlx::PgPool) -> Result<()> {
     let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(sqlx::types::Uuid::from(component.principal_id()))
-        .execute(connection)
-        .await?;
+    sqlx::query(
+        "WITH principal AS (INSERT INTO platform.\"user\" (id) VALUES ($1) ON CONFLICT (id) DO NOTHING)
+         INSERT INTO platform.login_principal (login, principal_id) VALUES (current_user, $1)
+         ON CONFLICT (login) DO UPDATE SET principal_id = EXCLUDED.principal_id",
+    )
+    .bind(sqlx::types::Uuid::from(component.principal_id()))
+    .execute(client)
+    .await?;
     Ok(())
 }
 
@@ -400,20 +405,34 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires: docker"]
-    async fn verification_migration_accepts_a_platform_file_reference() {
+    async fn verification_migration_can_write_under_its_principal() {
         let server = wamn_test_infrastructure::containers::start_postgres()
             .await
             .unwrap();
         let database = server.create_database("tests").await.unwrap();
         let root = std::env::temp_dir().join(format!("wamn-file-reference-{}", std::process::id()));
         fs::create_dir_all(root.join("migrations")).unwrap();
-        fs::write(root.join("migrations/0001_initial.sql"),
-            "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
+        fs::write(
+            root.join("migrations/0001_initial.sql"),
+            "CREATE TABLE files_fixture.attachment (
+                 id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY DEFAULT uuidv7(),
+                 file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id),
+                 created_by uuid NOT NULL CONSTRAINT attachment_created_by_fkey
+                     REFERENCES platform.\"user\" (id) ON DELETE RESTRICT,
+                 created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );
+             INSERT INTO files_fixture.attachment (created_by)
+             VALUES (wamn_authority.current_principal_id());",
+        )
+        .unwrap();
         let result = migrate(database.as_str(), &["files_fixture".into()], &[&root], &[]).await;
         fs::remove_dir_all(root).unwrap();
-        result.expect("the verification database permits a platform.file foreign key");
+        result.expect("the verification database supplies the actor row for the package write");
         let client = pool(database.as_str(), 4).await.unwrap();
-        let error = sqlx::raw_sql(AssertSqlSafe(("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").to_owned()).into_sql_str()).execute(&client).await.unwrap_err();
+        let error = sqlx::raw_sql("UPDATE files_fixture.attachment SET file_id = uuidv7()")
+            .execute(&client)
+            .await
+            .unwrap_err();
         assert_eq!(
             error
                 .as_database_error()

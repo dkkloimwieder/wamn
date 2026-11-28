@@ -29,7 +29,7 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
             "id",
             SqlValueType::Uuid,
             false,
-            Some(ColumnDefault::GenRandomUuid),
+            Some(ColumnDefault::Uuidv7),
             None,
         ),
         Column::new("enabled", SqlValueType::Boolean, false, None, None),
@@ -152,7 +152,7 @@ fn canonical_bytes_freeze_the_complete_ir() {
         r#"{"name":"count","type":"int32","nullable":false,"default":null,"generation":null},"#,
         r#"{"name":"created_at","type":"timestamptz","nullable":false,"default":{"type":"current_timestamp"},"generation":null},"#,
         r#"{"name":"enabled","type":"boolean","nullable":false,"default":null,"generation":null},"#,
-        r#"{"name":"id","type":"uuid","nullable":false,"default":{"type":"gen_random_uuid"},"generation":null},"#,
+        r#"{"name":"id","type":"uuid","nullable":false,"default":{"type":"uuidv7"},"generation":null},"#,
         r#"{"name":"metadata","type":"json","nullable":true,"default":null,"generation":null},"#,
         r#"{"name":"payload","type":"bytes","nullable":false,"default":null,"generation":null},"#,
         r#"{"name":"ratio","type":"float64","nullable":false,"default":null,"generation":null},"#,
@@ -228,6 +228,10 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     assert_eq!(
         postgres_default(SqlValueType::Uuid, "gen_random_uuid()").unwrap(),
         ColumnDefault::GenRandomUuid
+    );
+    assert_eq!(
+        postgres_default(SqlValueType::Uuid, "uuidv7()").unwrap(),
+        ColumnDefault::Uuidv7
     );
     assert_eq!(
         postgres_default(SqlValueType::Timestamptz, "CURRENT_TIMESTAMP").unwrap(),
@@ -312,8 +316,9 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         (SqlValueType::Numeric, "'1.2.3'"),
         // a bare identifier
         (SqlValueType::Text, "open"),
-        // the two named functions on a type they do not serve
+        // A UUID function on a non-UUID column.
         (SqlValueType::Text, "gen_random_uuid()"),
+        (SqlValueType::Text, "uuidv7()"),
         // a type with no literal default form yet
         (SqlValueType::Json, "'{}'::json"),
     ] {
