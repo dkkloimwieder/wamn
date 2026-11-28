@@ -38,6 +38,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the host's 503 on a failed signing-key fetch (`wamn-authentication`) and the Job security context (`wamn-kubernetes`). The stock host pod already runs as UID 65532, so no `USER` line is added (owner ruling 2026-11-26). |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections, connection events and locking. | 4 | Yes, once, at E5.14 after the owner's go: the host's namespace check and `--environment` argument (`services/host/src/host.rs`), and the host crates that E5.1, E5.11 and E5.13 change. |
 | 6 | Public addresses: T11, and client base paths. | 5 | Yes, once, at E6.8 after the owner's go, with `edge-web`, `control`, the browser bundles, and `identity` if E6.7 needs it (owner ruling 2026-11-27). The host links `wamn-routes`, `wamn-kubernetes` and `wamn-registry`, and T11 changes how the workload binds its host (correction 7). |
+| Inventory app | The example application: text primary keys in the generator, then the `wamn_inventory` package. Spec: [inv-app](inv-app.md). | 6, and the stamp column keys and `uuidv7()` defaults on main. | No (I): the text-key change is in `crates/codegen` and `apps/crates/guest`, which the host does not link. |
 | 7 | Cloud and production: T6, T7, T8, the GKE cluster of T13, and the rest of T16. | A GKE cluster, created only with explicit authorization. | Mostly no (I). |
 | Cleanup | Removes what Epics 3 to 5 added that the product does not need. The owner rules each item. Not started. | 5 | Not known until the owner rules the items. |
 | 8 and later | Workflow design: W1 to W12. | Every epic above. | Yes. |
@@ -50,6 +51,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 - Epic 2 sets no target for crate count, file size or test count, and adds no second installed-state model, schema language or universal serializer.
 - Epic 3 adds no pending queue, general reconciler, or resolver that looks in several repositories.
 - Nothing in the workflow design is built before Epic 8.
+- The inventory app starts as soon as Epic 6 is done (owner ruling 2026-11-27). It is not scoped into issues until then.
 
 The owner ruled the 16 questions of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#7-questions-for-rulings) on 2026-11-26. The rulings and the 16 corrections of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#1-corrections-to-the-plan) are written into R6, L8, T1, T2, T4, T5, T10, T16 and sections 5, 7, 8 and 9.
 
