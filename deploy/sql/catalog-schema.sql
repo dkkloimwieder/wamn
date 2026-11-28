@@ -3,6 +3,7 @@
 -- Package application binds wamn:apply-package. Connection and workflow
 -- administration bind the caller and the sealed operation. The history tables
 -- below retain row changes for unlimited time.
+-- app-schema.sql adds the stamp keys after it seeds the project principals.
 
 CREATE TABLE catalog.package (
     package_id         text        NOT NULL,
@@ -58,12 +59,12 @@ CREATE TRIGGER package_delete_immutable
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
 CREATE TABLE platform.external_system (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     name text NOT NULL UNIQUE CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$')
 );
 
 CREATE TABLE platform.connection (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     name text NOT NULL UNIQUE CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
     integration_type text NOT NULL,
     auth_type text NOT NULL,
@@ -122,7 +123,7 @@ CREATE TRIGGER connection_event_immutable
     FOR EACH STATEMENT EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TABLE platform.credential (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
     store         text NOT NULL CHECK (store = 'k8s'),
     ref           text NOT NULL,

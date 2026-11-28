@@ -99,7 +99,7 @@ CREATE TABLE registry.integration_type_auth (
 );
 
 CREATE TABLE registry.target (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     name text NOT NULL UNIQUE,
     type text NOT NULL CHECK (type IN ('local', 'cloud')),
     active boolean NOT NULL DEFAULT true,
@@ -219,7 +219,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principal (
-    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
     type         text NOT NULL,
     subject      text NOT NULL,
     email        text,
@@ -400,7 +400,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- One password login owns a family of single-use renewal credentials.
 -- Credential material gets stamps but never row-image history.
 CREATE TABLE identity.password_login (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     principal_id uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     issuer text NOT NULL CHECK (octet_length(issuer) BETWEEN 1 AND 2048),
@@ -470,7 +470,7 @@ CREATE TRIGGER revoke_disabled_password_login
 -- needed. Compromise removal deletes the key immediately and never falls back.
 CREATE TABLE identity.session_key (
     issuer         text NOT NULL CHECK (btrim(issuer) <> ''),
-    kid            uuid NOT NULL DEFAULT gen_random_uuid(),
+    kid            uuid NOT NULL DEFAULT uuidv7(),
     public_key     bytea NOT NULL CHECK (octet_length(public_key) = 32),
     private_key_envelope  bytea,
     published_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1250,11 +1250,6 @@ INSERT INTO registry.integration_type_auth (integration_type, auth_type) VALUES
 
 INSERT INTO registry.target (name, type) VALUES ('cloud', 'cloud');
 
--- The deployment metadata seed uses the schema owner's login principal.
-DO $meta$ BEGIN
-  INSERT INTO registry.meta DEFAULT VALUES;
-END $meta$;
-
 -- The system owner stamps both platform principals as wamn:provisioning.
 DO $provisioning$ BEGIN
   INSERT INTO identity.principal (id, type, subject, display_name)
@@ -1263,6 +1258,113 @@ DO $provisioning$ BEGIN
          ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
           'wamn:identity-service', 'wamn:identity-service');
 END $provisioning$;
+
+-- Install stamp keys after the system principals are seeded.
+ALTER TABLE registry.meta
+    ADD CONSTRAINT meta_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT meta_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.org
+    ADD CONSTRAINT org_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT org_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.project
+    ADD CONSTRAINT project_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT project_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.principal
+    ADD CONSTRAINT principal_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT principal_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.project_role
+    ADD CONSTRAINT project_role_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT project_role_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.org_membership
+    ADD CONSTRAINT org_membership_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT org_membership_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.org_role
+    ADD CONSTRAINT org_role_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT org_role_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.password_credential
+    ADD CONSTRAINT password_credential_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT password_credential_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.password_token
+    ADD CONSTRAINT password_token_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT password_token_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.password_login
+    ADD CONSTRAINT password_login_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT password_login_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.renewal_credential
+    ADD CONSTRAINT renewal_credential_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT renewal_credential_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.session_key
+    ADD CONSTRAINT session_key_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT session_key_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.nats_key
+    ADD CONSTRAINT nats_key_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT nats_key_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.session_signing_state
+    ADD CONSTRAINT session_signing_state_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT session_signing_state_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.env
+    ADD CONSTRAINT env_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT env_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.env_quota
+    ADD CONSTRAINT env_quota_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT env_quota_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.project_env
+    ADD CONSTRAINT project_env_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT project_env_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.project_env_membership
+    ADD CONSTRAINT project_env_membership_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT project_env_membership_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE registry.capture_gap
+    ADD CONSTRAINT capture_gap_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT capture_gap_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+ALTER TABLE identity.password_attempt
+    ADD CONSTRAINT password_attempt_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT password_attempt_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES identity.principal (id) ON DELETE RESTRICT;
+
+-- The deployment metadata seed uses the schema owner's login principal.
+DO $meta$ BEGIN
+  INSERT INTO registry.meta DEFAULT VALUES;
+END $meta$;
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN

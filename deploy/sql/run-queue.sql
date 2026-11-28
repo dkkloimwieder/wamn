@@ -6,8 +6,8 @@
 -- Run persistence lives in crates/plugin/src/run_store.
 -- The host grants the first lease during admission. The service takes expired leases.
 --
--- Project provisioning applies this schema after run-state.sql, which creates
--- the wamn_run schema and the run table referenced by the queue.
+-- Project provisioning applies this schema after app-schema.sql seeds the project
+-- principals and run-state.sql creates the run table.
 --
 -- Only host roles can read or write the queue. A project database holds one
 -- project. FORCE RLS requires the protected caller row, and table grants
@@ -34,9 +34,13 @@
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT run_queue_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT run_queue_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     run_id           text NOT NULL,
     available_at     timestamptz NOT NULL DEFAULT now(),
     lease_owner      text,

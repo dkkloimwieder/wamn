@@ -209,7 +209,7 @@ BEGIN
       FROM (VALUES
             (1, 'position', format('bigint GENERATED ALWAYS AS IDENTITY (SEQUENCE NAME %I.%I)',
                                    schema, history || '_position_seq')),
-            (2, 'id', 'uuid DEFAULT gen_random_uuid()'),
+            (2, 'id', 'uuid DEFAULT uuidv7()'),
             (3, 'project_id', 'text'),
             (4, 'row_key', 'jsonb'),
             (5, 'type', 'text'),

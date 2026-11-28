@@ -76,7 +76,7 @@ REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run (
-    run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
+    run_id          text NOT NULL DEFAULT uuidv7()::text,
     package_id      text NOT NULL,
     env             text NOT NULL,
     -- Trusted immutable CDC event ancestry is distinct from retired execution

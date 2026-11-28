@@ -132,6 +132,32 @@ FROM (VALUES
     ('42b638ce-4892-52a4-95a9-316c4c0e820d', 'service', 'workflow@platform.invalid', 'workflow')
 ) AS seed(id, type, email, display_name);
 
+-- Install stamp keys now that the project principals exist.
+ALTER TABLE platform."user"
+    ADD CONSTRAINT user_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT user_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+
+-- The project applier creates the catalog tables before this file.
+ALTER TABLE catalog.package
+    ADD CONSTRAINT package_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
+    ADD CONSTRAINT package_updated_by_fkey FOREIGN KEY (updated_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+ALTER TABLE platform.credential
+    ADD CONSTRAINT credential_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+ALTER TABLE platform.oauth_authorization
+    ADD CONSTRAINT oauth_authorization_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+ALTER TABLE platform.connection_generation
+    ADD CONSTRAINT connection_generation_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+ALTER TABLE catalog.workflow
+    ADD CONSTRAINT workflow_created_by_fkey FOREIGN KEY (created_by)
+        REFERENCES platform."user" (id) ON DELETE RESTRICT;
+
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform."user"
     FOR EACH ROW
@@ -140,7 +166,7 @@ GRANT SELECT ON platform."user" TO wamn_app;
 
 -- Only the platform login reads or writes PATs and their history.
 CREATE TABLE platform.pat (
-    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT,
     prefix     text NOT NULL UNIQUE CHECK (prefix ~ '^[0-9a-f]{16}$'),
     hash       text NOT NULL CHECK (hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -148,9 +174,13 @@ CREATE TABLE platform.pat (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT pat_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT pat_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CHECK (expires_at > created_at)
 );
 CREATE INDEX pat_user_idx ON platform.pat (user_id);
@@ -172,9 +202,13 @@ CREATE TABLE platform.role (
     description text,
     active      boolean NOT NULL DEFAULT true,
     created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
+    created_by  uuid NOT NULL
+        CONSTRAINT role_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
+    updated_by  uuid NOT NULL
+        CONSTRAINT role_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (name),
     CONSTRAINT role_name_check
         CHECK (name ~ '^[a-z0-9][a-z0-9-]*$' AND octet_length(name) <= 64)
@@ -193,9 +227,13 @@ CREATE TABLE platform.user_role (
     user_id    uuid NOT NULL,
     role_name  text NOT NULL,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT user_role_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT user_role_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (user_id, role_name),
     FOREIGN KEY (user_id)
         REFERENCES platform."user" (id) ON DELETE RESTRICT,
@@ -220,9 +258,13 @@ CREATE TABLE platform.permission (
     role_name   text NOT NULL,
     permission  text NOT NULL,
     created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
+    created_by  uuid NOT NULL
+        CONSTRAINT permission_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
+    updated_by  uuid NOT NULL
+        CONSTRAINT permission_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (role_name, permission),
     FOREIGN KEY (role_name)
         REFERENCES platform.role (name) ON DELETE RESTRICT,
@@ -246,9 +288,13 @@ CREATE TABLE platform.env (
     id         boolean NOT NULL DEFAULT true CHECK (id),
     active     boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT env_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT env_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (id)
 );
 CREATE TRIGGER wamn_record_history_stamp
@@ -358,7 +404,7 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- File objects belong to one application and use the active storage generation.
 CREATE TABLE platform.file (
-    id                    uuid NOT NULL DEFAULT gen_random_uuid(),
+    id                    uuid NOT NULL DEFAULT uuidv7(),
     app                   text NOT NULL CHECK (app <> ''),
     connection_id         uuid NOT NULL REFERENCES platform.connection (id),
     name                  text NOT NULL CHECK (name <> ''),
@@ -372,9 +418,13 @@ CREATE TABLE platform.file (
     width                 integer CHECK (width > 0),
     height                integer CHECK (height > 0),
     created_at            timestamptz NOT NULL,
-    created_by            uuid NOT NULL,
+    created_by            uuid NOT NULL
+        CONSTRAINT file_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at            timestamptz NOT NULL,
-    updated_by            uuid NOT NULL,
+    updated_by            uuid NOT NULL
+        CONSTRAINT file_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (id),
     CHECK (blob_key = '_wamn_files/live/' || id::text
         OR blob_key ~ ('^[a-z0-9-]+/_wamn_files/live/' || id::text || '$')),
@@ -399,14 +449,18 @@ CREATE TRIGGER file_store BEFORE INSERT OR UPDATE OF connection_id ON platform.f
 
 -- One document number sequence of one application, and its pattern.
 CREATE TABLE platform.number_sequence (
-    id          uuid NOT NULL DEFAULT gen_random_uuid(),
+    id          uuid NOT NULL DEFAULT uuidv7(),
     app         text NOT NULL CHECK (app <> ''),
     name        text NOT NULL CHECK (name <> ''),
     pattern     text NOT NULL CHECK (pattern <> ''),
     created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
+    created_by  uuid NOT NULL
+        CONSTRAINT number_sequence_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
+    updated_by  uuid NOT NULL
+        CONSTRAINT number_sequence_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (id),
     UNIQUE (app, name)
 );
@@ -419,9 +473,13 @@ CREATE TABLE platform.number_counter (
     key_value   text NOT NULL,
     value       bigint NOT NULL CHECK (value >= 1),
     created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
+    created_by  uuid NOT NULL
+        CONSTRAINT number_counter_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
+    updated_by  uuid NOT NULL
+        CONSTRAINT number_counter_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (sequence_id, counter, key_value),
     FOREIGN KEY (sequence_id)
         REFERENCES platform.number_sequence (id) ON DELETE RESTRICT
@@ -436,9 +494,13 @@ CREATE TABLE platform.setting (
     value      jsonb NOT NULL,
     locked     boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT setting_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT setting_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     PRIMARY KEY (target_type, target_id, key),
     CONSTRAINT setting_target_type_check
         CHECK (target_type IN ('org', 'project', 'app', 'role', 'user'))
