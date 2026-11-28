@@ -1,22 +1,17 @@
 import { createSignal, onCleanup } from "solid-js";
-import type { Config } from "./config";
-
-export type Type = "app" | "control";
-
-/** An audience belongs to this deployment's org. */
-export function audienceType(aud: string, config: Config): Type | undefined {
-  if (aud.startsWith(`urn:wamn:project-env:${config.org}:`)) return "app";
-  return aud === `urn:wamn:org:${config.org}` ? "control" : undefined;
-}
 
 /** Browser history belongs to the shell. Screens receive open and close callbacks. */
-export function createAddress() {
+export function createAddress(mount?: string) {
   const read = () => new URL(window.location.href);
   const [url, setUrl] = createSignal(read());
   const changed = () => setUrl(read());
   window.addEventListener("popstate", changed);
   onCleanup(() => window.removeEventListener("popstate", changed));
   const navigate = (path: string, replace = false, opened = false) => {
+    if (mount !== undefined && !path.startsWith(mount)) {
+      window.location.assign(path);
+      return;
+    }
     window.history[replace ? "replaceState" : "pushState"]({ opened }, "", path);
     changed();
   };

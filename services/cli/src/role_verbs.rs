@@ -6,8 +6,8 @@ use serde_json::json;
 /// The application host and the caller's session.
 #[derive(Debug, Args)]
 pub struct EnvArgs {
-    /// Base URL of the application host.
-    #[arg(long, env = "WAMN_CONTROL_URL", hide_env_values = true)]
+    /// Application API base URL, including /<project>/<app>/api.
+    #[arg(long)]
     pub host_url: String,
     /// The caller's session token.
     #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]

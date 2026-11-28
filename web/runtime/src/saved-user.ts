@@ -50,9 +50,9 @@ export function opensOffline(user: SavedUser, now: number): boolean {
   return offlineSettings(user).profile === "local_first" || user.loginExpiresAt * 1000 > now;
 }
 
-/** The last signed-in user, per application and environment. */
-export function savedUser(application: string, environment: string) {
-  const key = `wamn-user:${application}:${environment}`;
+/** The last signed-in user, per application mount on this origin. */
+export function savedUser(mount: string) {
+  const key = `wamn-user:${mount}`;
   return {
     load(): SavedUser | undefined {
       try {
@@ -96,9 +96,9 @@ export interface SavedView {
   readonly admin: boolean;
 }
 
-/** The view of the last signed-in user, per application and environment. */
-export function savedView(application: string, environment: string) {
-  const key = `wamn-view:${application}:${environment}`;
+/** The view of the last signed-in user, per application mount on this origin. */
+export function savedView(mount: string) {
+  const key = `wamn-view:${mount}`;
   return {
     /** The saved view of this user, or undefined when another user saved the last one. */
     load(userId: string): SavedView | undefined {

@@ -32,6 +32,8 @@ import {
 import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "../src/generated/wamn_receiving/receipt.js";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "../src/forms";
 
+const APP = "warehouse/receiving";
+
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = () => undefined;
   window.matchMedia = ((query: string) => ({
@@ -47,7 +49,7 @@ function props(invoke: Transport["invoke"]): ScreenProps {
   return {
     transport: { invoke },
     holds: () => true,
-    params: { aud: "receiving" },
+    params: { aud: APP },
     search: {},
     open: vi.fn(),
     close: vi.fn(),
@@ -128,7 +130,7 @@ describe("Receiving descriptions and bindings", () => {
       }
       throw new Error(`Unexpected operation: ${request.operation}`);
     });
-    const view = { ...props(invoke), params: { id: order.id, aud: "receiving" } };
+    const view = { ...props(invoke), params: { id: order.id, aud: APP } };
     const Table = SECTIONS[0]!.screens[0]!.component;
     render(() => <Table {...view} />);
     const link = await screen.findByRole("link", { name: "PO-HUMAN" });
@@ -178,7 +180,7 @@ describe("Receiving descriptions and bindings", () => {
         return { status: "completed", value: { rows: [{ id: orderId, purchase_order_number: "PO-HUMAN" }] } };
       throw new Error(`Unexpected operation: ${request.operation}`);
     });
-    const view = { ...props(invoke), params: { id: receipt.id, aud: "receiving" } };
+    const view = { ...props(invoke), params: { id: receipt.id, aud: APP } };
     const Table = SECTIONS[1]!.screens[0]!.component;
     render(() => <Table {...view} />);
     const table = await screen.findByRole("table", { name: ReceiptQueryTable.title });
@@ -394,7 +396,7 @@ describe("Receiving descriptions and bindings", () => {
       screen.getByRole("button", { name: SupplierCreateForm.title }).closest(".table-workspace-header"),
     ).not.toBeNull();
     const open = within(table).getByRole("link", { name: "PO-1" });
-    expect(open.getAttribute("href")).toBe("/receiving/purchase-orders/1");
+    expect(open.getAttribute("href")).toBe(`/${APP}/purchase-orders/1`);
     fireEvent.click(open);
     expect(view.open).toHaveBeenCalledWith("purchase-orders/1");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));

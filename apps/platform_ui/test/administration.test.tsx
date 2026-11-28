@@ -3,7 +3,7 @@ import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
 import { administrationSections } from "../src/administration";
 import { Shell } from "../src/shell";
-import { AUD, identity, input } from "./fixtures";
+import { AUD, MOUNT, identity, input } from "./fixtures";
 
 const READ = "sample:item/read";
 const ADMIN_ONLY = "wamn-control:role/list";
@@ -86,7 +86,7 @@ function mount(
     return session.fetch(url, init);
   };
   window.history.pushState({}, "", `/${AUD}/administration/${path}`);
-  render(() => <Shell title="WAMN" org="acme" sections={administrationSections} fetch={fetch} />);
+  render(() => <Shell title="WAMN" org="acme" mount={MOUNT} sections={administrationSections} fetch={fetch} />);
   return {
     writes,
     calls,
@@ -147,7 +147,7 @@ describe("application roles", () => {
     {
       const observed = writes;
       expect(observed).toHaveProperty(["length"], 1);
-      expect(observed).toHaveProperty(["0", "path"], "/api/wamn_control/permission/grant");
+      expect(observed).toHaveProperty(["0", "path"], `${MOUNT}api/wamn_control/permission/grant`);
       expect(observed).toHaveProperty(["0", "value", "role"], "reader");
       expect(observed).toHaveProperty(["0", "value", "operation"], READ);
     }
@@ -156,7 +156,7 @@ describe("application roles", () => {
     await waitFor(() => expect(screen.getByText(`Revoked ${READ} from reader.`)).toBeTruthy());
     expect(cell()).toHaveProperty("checked", false);
     expect(writes).toHaveLength(2);
-    expect(writes[1]?.path).toBe("/api/wamn_control/permission/revoke");
+    expect(writes[1]?.path).toBe(`${MOUNT}api/wamn_control/permission/revoke`);
   });
   it.each([false, true])("reverts a refused change from granted=%s and allows retry", async (granted) => {
     const state = mount("roles/reader/permissions", {
@@ -197,8 +197,8 @@ describe("application roles", () => {
     {
       const observed = writes.map((entry) => entry.path);
       expect(observed).toHaveProperty(["length"], 2);
-      expect(observed).toHaveProperty(["0"], "/api/wamn_control/role/create");
-      expect(observed).toHaveProperty(["1"], "/api/wamn_control/role/deactivate");
+      expect(observed).toHaveProperty(["0"], `${MOUNT}api/wamn_control/role/create`);
+      expect(observed).toHaveProperty(["1"], `${MOUNT}api/wamn_control/role/deactivate`);
     }
   });
   it("opens a role named create without colliding with the create form", async () => {
@@ -257,10 +257,10 @@ describe("role users", () => {
     {
       const observed = writes;
       expect(observed).toHaveProperty(["length"], 2);
-      expect(observed).toHaveProperty(["0", "path"], "/api/wamn_control/user_role/grant");
+      expect(observed).toHaveProperty(["0", "path"], `${MOUNT}api/wamn_control/user_role/grant`);
       expect(observed).toHaveProperty(["0", "value", "user_id"], "alex");
       expect(observed).toHaveProperty(["0", "value", "role"], "reader");
-      expect(observed).toHaveProperty(["1", "path"], "/api/wamn_control/user_role/revoke");
+      expect(observed).toHaveProperty(["1", "path"], `${MOUNT}api/wamn_control/user_role/revoke`);
       expect(observed).toHaveProperty(["1", "value", "user_id"], "alex");
       expect(observed).toHaveProperty(["1", "value", "role"], "reader");
     }
@@ -354,10 +354,10 @@ describe("application users", () => {
     {
       const observed = writes;
       expect(observed).toHaveProperty(["length"], 2);
-      expect(observed).toHaveProperty(["0", "path"], "/api/wamn_control/user_role/grant");
+      expect(observed).toHaveProperty(["0", "path"], `${MOUNT}api/wamn_control/user_role/grant`);
       expect(observed).toHaveProperty(["0", "value", "user_id"], "alex");
       expect(observed).toHaveProperty(["0", "value", "role"], "reader");
-      expect(observed).toHaveProperty(["1", "path"], "/api/wamn_control/user_role/revoke");
+      expect(observed).toHaveProperty(["1", "path"], `${MOUNT}api/wamn_control/user_role/revoke`);
       expect(observed).toHaveProperty(["1", "value", "user_id"], "alex");
       expect(observed).toHaveProperty(["1", "value", "role"], "reader");
     }
@@ -418,9 +418,9 @@ describe("application users", () => {
 });
 
 describe("application administration navigation", () => {
-  it("shows Roles and Users in the environment context with literal uppercase breadcrumbs", async () => {
+  it("shows Roles and Users in the application context with literal uppercase breadcrumbs", async () => {
     mount();
-    await screen.findByRole("button", { name: "Change context: Environment widgets/dev" });
+    await screen.findByRole("button", { name: "Change context: Application widgets/stock" });
     const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(pane.getByRole("link", { name: "Roles" })).toBeTruthy();
     expect(pane.getByRole("link", { name: "Permissions overview" })).toBeTruthy();
@@ -433,7 +433,7 @@ describe("application administration navigation", () => {
       expect(observed).toHaveProperty(["length"], 4);
       expect(observed).toHaveProperty(["0"], "ACME");
       expect(observed).toHaveProperty(["1"], "WIDGETS");
-      expect(observed).toHaveProperty(["2"], "DEV");
+      expect(observed).toHaveProperty(["2"], "STOCK");
       expect(observed).toHaveProperty(["3"], "USERS");
     }
   });
@@ -450,7 +450,7 @@ describe("application administration navigation", () => {
       expect(observed).toHaveProperty(["length"], 6);
       expect(observed).toHaveProperty(["0"], "ACME");
       expect(observed).toHaveProperty(["1"], "WIDGETS");
-      expect(observed).toHaveProperty(["2"], "DEV");
+      expect(observed).toHaveProperty(["2"], "STOCK");
       expect(observed).toHaveProperty(["3"], "ROLES");
       expect(observed).toHaveProperty(["4"], "READER");
       expect(observed).toHaveProperty(["5"], "USERS");
@@ -488,9 +488,9 @@ describe("application administration navigation", () => {
     await screen.findByRole("heading", { name: "No page here" });
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
     {
-      const observed = calls.filter((path) => path.startsWith("/api/"));
+      const observed = calls.filter((path) => path.startsWith(`${MOUNT}api/`));
       expect(observed).toHaveProperty(["length"], 1);
-      expect(observed).toHaveProperty(["0"], "/api/wamn_control/permission/mine");
+      expect(observed).toHaveProperty(["0"], `${MOUNT}api/wamn_control/permission/mine`);
     }
   });
 });

@@ -10,6 +10,8 @@ Latency is in milliseconds.
 Use the installed `kind` platform for development measurements.
 [Development loop](development-loop.md#measure-one-change) separates build, publication, and deployment times.
 Use the deployed benchmark for request latency and throughput.
+Pass the installed application API URL in `cargo xtask bench --base-url https://<host>/<project>/<app>/api`.
+If the benchmark connects through a port forward, pass the public host in `--host`.
 The native development benchmark is removed with the native host topology.
 
 ## Platform baseline

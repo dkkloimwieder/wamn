@@ -42,8 +42,8 @@ SidebarContextSwitcher shows the current context, searches sibling choices, and 
 At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.
 Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, and Members.
 Environment membership screens filter members and view grants and revocations to the current environment.
-In an application audience, the environment pane shows Roles and Users when `permission.mine` grants access.
-Breadcrumbs name the organization, project, and environment in uppercase.
+The application pane shows Roles and Users when `permission.mine` grants access.
+App breadcrumbs name the organization, project, and application in uppercase.
 The Roles grid reads served operations from `permission.list` for each role.
 Each checkbox sends one grant or revoke command and returns to its previous value after failure.
 The admin column is read-only, and admin-only operations are disabled.
@@ -67,7 +67,9 @@ Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe Ent
 Theme and a main landmark wrap each default viewport panel. These pages contain no dashboard Frame.
 Identity forms use `@wfe/form` and FormView. The no-access panel contains a return link.
 
-Sign-in uses the org from `/config.json` and posts once to `/password/session` with `aud=urn:wamn:org:<org>`.
+The control page reads `/config.json`.
+An app page reads `config.json` under its mount and sends API requests to `/<project>/<app>/api`.
+Both sign in through `/password/session` with `aud=urn:wamn:org:<org>`.
 There is no environment chooser or discovery password check.
 The shell opens the org's control address after login. Pasted application addresses use the same org token.
 Breadcrumbs appear on dashboard screens and use literal uppercase text, including record names.

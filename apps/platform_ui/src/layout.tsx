@@ -13,6 +13,8 @@ import type { ScreenProps, ShellSection } from "./shell";
 export default function Layout(props: {
   title: string;
   aud: string;
+  org: string;
+  mount?: string | undefined;
   sections: readonly ShellSection[];
   holds: ScreenProps["holds"];
   address: Address;
@@ -22,20 +24,19 @@ export default function Layout(props: {
   routes: readonly ShellSection[];
 }): JSX.Element {
   const app = () => {
-    const parts = props.aud.split(":");
-    return parts[2] === "project-env" ? { org: parts[3]!, project: parts[4]!, env: parts[5]! } : undefined;
+    if (props.mount === undefined) return undefined;
+    const [, project, name] = props.mount.split("/");
+    return { project: project!, name: name! };
   };
-  const projectPath = () => {
-    const config = app()!;
-    return `/urn:wamn:org:${config.org}/projects/${encodeURIComponent(config.project)}`;
-  };
+  const projectPath = () => `/urn:wamn:org:${props.org}/projects/${encodeURIComponent(app()!.project)}`;
+  const base = () => props.mount ?? `/${props.aud}/`;
   const follow = (path: string, close?: () => void) => (event: MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     props.address.navigate(path);
     close?.();
   };
-  const path = () => props.address.url().pathname.split("/").slice(2).join("/");
+  const path = () => props.address.url().pathname.slice(base().length);
   const selected = createMemo(() => {
     for (const section of props.routes)
       for (const route of [...section.screens, ...(section.routes ?? [])]) {
@@ -72,12 +73,12 @@ export default function Layout(props: {
         </Page>
       );
     const { route, home, params } = current;
-    const open = (path: string) => props.address.navigate(`/${props.aud}/${path}`, false, true);
+    const open = (path: string) => props.address.navigate(`${base()}${path}`, false, true);
     const close = () =>
       window.history.state?.opened === true
         ? window.history.back()
         : props.address.navigate(
-            `/${props.aud}/${home && props.holds(home.operation) ? home.path : (props.sections[0]?.screens[0]?.path ?? "")}`,
+            `${base()}${home && props.holds(home.operation) ? home.path : (props.sections[0]?.screens[0]?.path ?? "")}`,
             true,
           );
     return (
@@ -99,19 +100,19 @@ export default function Layout(props: {
     );
   }
   const roleName = () => (app() ? selected()?.params.role : undefined);
-  const rolePath = () => `/${props.aud}/administration/roles/${encodeURIComponent(roleName()!)}`;
+  const rolePath = () => `${base()}administration/roles/${encodeURIComponent(roleName()!)}`;
   const scroll = () => selected()?.route.scroll ?? "main";
   const breadcrumbs = () => {
-    const root = `/${props.aud}`;
+    const root = props.mount ?? `/${props.aud}`;
     const config = app();
     const entries = config
       ? [
-          { label: config.org, href: `/urn:wamn:org:${config.org}/projects` },
+          { label: props.org, href: `/urn:wamn:org:${props.org}/projects` },
           { label: config.project, href: projectPath() },
-          { label: config.env, href: root },
+          { label: config.name, href: root },
         ]
       : [{ label: props.title, href: root }];
-    const parts = props.address.url().pathname.split("/").slice(2).filter(Boolean);
+    const parts = path().split("/").filter(Boolean);
     const routes = props.sections.flatMap((section) => [...section.screens, ...(section.routes ?? [])]);
     const selected = routes.find((route) => matchPath(route.path, parts.join("/")));
     for (let index = 0; index < parts.length; index += 1) {
@@ -128,7 +129,7 @@ export default function Layout(props: {
         const section = props.sections.find((section) => section.routes?.includes(route));
         const home = section?.screens[0];
         if (entries.length === 1 && home && home.path !== path && props.holds(home.operation)) {
-          entries.push({ label: section!.label, href: `${root}/${home.path}` });
+          entries.push({ label: section!.label, href: `${base()}${home.path}` });
         }
         const screenSection = props.sections.find((section) => section.screens.some((screen) => screen === route));
         const label = screenSection?.screens.length === 1 ? screenSection.label : route.label;
@@ -136,10 +137,10 @@ export default function Layout(props: {
         const params = matchPath(route.path, path)!;
         entries.push({
           label: label ?? params[segment.slice(1)] ?? parts[index]!,
-          href: `${root}/${path}${config && segment === ":role" ? "/permissions" : ""}`,
+          href: `${base()}${path}${config && segment === ":role" ? "/permissions" : ""}`,
         });
       } else if (index === parts.length - 1) {
-        entries.push({ label: "No page here", href: `${root}/${path}` });
+        entries.push({ label: "No page here", href: `${base()}${path}` });
       }
     }
     return entries;
@@ -154,7 +155,7 @@ export default function Layout(props: {
             route: () => props.address.url().pathname,
             href: (route) => route,
             views: { page: Destination },
-            onAudienceChange: (aud) => props.address.navigate(`/${aud}`),
+            onAudienceChange: () => props.address.navigate(props.mount ?? `/${props.aud}`),
             onNavigate: props.address.navigate,
           }}
           style={{ height: "100dvh" }}
@@ -220,18 +221,18 @@ export default function Layout(props: {
                                 roleName()
                                   ? { id: rolePath(), kind: "Role", name: roleName()! }
                                   : {
-                                      id: `/${props.aud}`,
-                                      kind: "Environment",
-                                      name: `${config().project}/${config().env}`,
+                                      id: base(),
+                                      kind: "Application",
+                                      name: `${config().project}/${config().name}`,
                                     }
                               }
                               options={[]}
                               parent={
                                 roleName()
                                   ? {
-                                      id: `/${props.aud}/administration/roles`,
-                                      kind: "Environment",
-                                      name: `${config().project}/${config().env}`,
+                                      id: `${base()}administration/roles`,
+                                      kind: "Application",
+                                      name: `${config().project}/${config().name}`,
                                     }
                                   : { id: projectPath(), kind: "Project", name: config().project }
                               }
@@ -276,23 +277,20 @@ export default function Layout(props: {
                               <For each={section.screens}>
                                 {(item) => (
                                   <a
-                                    href={`/${props.aud}/${item.path}`}
+                                    href={`${base()}${item.path}`}
                                     data-ui-text="system"
                                     aria-current={
-                                      props.address.url().pathname === `/${props.aud}/${item.path}` ||
-                                      props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`) ||
+                                      props.address.url().pathname === `${base()}${item.path}` ||
+                                      props.address.url().pathname.startsWith(`${base()}${item.path}/`) ||
                                       (item === section.screens[0] &&
                                         section.routes?.some((route) => {
-                                          const params = matchPath(
-                                            route.path,
-                                            props.address.url().pathname.split("/").slice(2).join("/"),
-                                          );
+                                          const params = matchPath(route.path, path());
                                           return params && props.holds(route.operation, params.project);
                                         }))
                                         ? "page"
                                         : undefined
                                     }
-                                    onClick={follow(`/${props.aud}/${item.path}`, navigation.close)}
+                                    onClick={follow(`${base()}${item.path}`, navigation.close)}
                                   >
                                     {section.screens.length === 1 ? section.label : `${section.label}: ${item.label}`}
                                   </a>

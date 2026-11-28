@@ -66,4 +66,5 @@ If a watch ends, web keeps its routes while it requests a fresh list.
 The probe lists the same metadata once.
 For each route with a browser bundle, it requests the index and `config.json` through the local listener.
 It uses the app mount for application bundles and the host root for the org bundle.
-It fails if a response is not HTTP 200.
+The probe requires HTTP 200 for both files.
+It also sends `HEAD` to the mounted `api/health` of each app bundle and requires a successful status.

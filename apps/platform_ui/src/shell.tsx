@@ -28,7 +28,7 @@ import {
   type SessionState,
   type Transport,
 } from "@wamn/web-runtime";
-import { audienceType, createAddress, type Address, type Type } from "./address";
+import { createAddress, type Address } from "./address";
 import type { Config } from "./config";
 import { identityPage, SignInForm } from "./identity";
 import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
@@ -207,25 +207,24 @@ export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component
 }
 
 export function Shell(props: ShellProps): JSX.Element {
-  const address = createAddress();
+  const address = createAddress(props.mount);
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
-  const audience = () => address.url().pathname.split("/")[1] ?? "";
+  const control = `urn:wamn:org:${props.org}`;
+  const route = () => {
+    const path = address.url().pathname;
+    if (props.mount !== undefined) {
+      return path.startsWith(props.mount) ? props.mount.slice(1, -1) : undefined;
+    }
+    return path.split("/")[1] === control ? control : undefined;
+  };
   return (
     <Loading>
       <Show
         when={identityPage(address.url().pathname)}
         keyed
         fallback={
-          <Show when={audience()} keyed fallback={<NotFound />}>
-            {(aud) => (
-              <Show
-                when={audienceType(aud, props)}
-                keyed
-                fallback={<NotFound message="This address names an environment of another org." />}
-              >
-                {(type) => <Session {...props} aud={aud} type={type} options={options} address={address} />}
-              </Show>
-            )}
+          <Show when={route()} keyed fallback={<NotFound />}>
+            {(aud) => <Session {...props} aud={aud} options={options} address={address} />}
           </Show>
         }
       >
@@ -235,37 +234,32 @@ export function Shell(props: ShellProps): JSX.Element {
   );
 }
 
-/** The saved user and view of an application environment. The control audience saves none. */
-function saved(aud: string) {
-  const match = /^urn:wamn:project-env:[^:]+:([^:]+):([^:]+):[^:]+$/.exec(aud);
-  if (!match) return undefined;
-  const app = match[1]!;
-  const env = match[2]!;
+/** The saved user and view of an app on this origin. */
+function saved(mount: string) {
   return {
-    user: savedUser(app, env),
-    view: savedView(app, env),
+    user: savedUser(mount),
+    view: savedView(mount),
     /** Delete the user's saved rows and outbox. */
     clear: (userId: string) => Promise.all([]),
   };
 }
 
-function Session(
-  props: ShellProps & { aud: string; type: Type; options: SessionOptions; address: Address },
-): JSX.Element {
+function Session(props: ShellProps & { aud: string; options: SessionOptions; address: Address }): JSX.Element {
   const [state, setState] = createSignal<SessionState | null>(null);
   const [view, setView] = createSignal<View>();
   const [trouble, setTrouble] = createSignal<string>();
   // The last signed-in user, shown while the first renewal cannot reach the identity service.
   const [offlineUser, setOfflineUser] = createSignal<string>();
-  const store = props.type === "app" ? saved(props.aud) : undefined;
+  const store = props.mount === undefined ? undefined : saved(props.mount);
+  const homePath = props.mount ?? `/${props.aud}`;
   const userId = () => {
     const current = state();
     return current?.status === "signedIn" ? current.userId : offlineUser();
   };
-  const sections = props.type === "control" ? (props.controlSections ?? []) : props.sections;
+  const sections = props.mount === undefined ? (props.controlSections ?? []) : props.sections;
   const transport = createTransport({
     ...props.options,
-    baseUrl: API_BASE,
+    baseUrl: props.mount === undefined ? API_BASE : `${props.mount}api`,
     cookie: true,
   });
   let active = true;
@@ -278,7 +272,7 @@ function Session(
   function show(shown: View): void {
     setView(shown);
     const first = shown.sections[0]?.screens[0];
-    if (props.address.url().pathname.replace(/\/$/, "") === `/${props.aud}` && first) {
+    if (props.address.url().pathname.replace(/\/$/, "") === homePath.replace(/\/$/, "") && first) {
       const projects = shown.controlMine?.projects.filter((entry) =>
         shown.holds(member.list.route.operation, entry.project),
       );
@@ -297,7 +291,7 @@ function Session(
     return held === undefined ? undefined : applicationView(held, sections);
   }
   async function readView(id: string): Promise<View> {
-    if (props.type === "control") return controlView(transport, sections);
+    if (props.mount === undefined) return controlView(transport, sections);
     const held = await applicationHeld(transport, id);
     if (held !== undefined) {
       store?.view.save(held);
@@ -418,10 +412,12 @@ function Session(
                   onSignOut: (run) => void signOutRuns.add(run),
                 }}
               >
-                <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
+                <NotFoundBoundary home={homePath} path={props.address.url().pathname}>
                   <Layout
-                    title={props.type === "control" ? props.org : props.title}
+                    title={props.mount === undefined ? props.org : props.title}
                     aud={props.aud}
+                    org={props.org}
+                    mount={props.mount}
                     sections={shown().sections}
                     holds={shown().holds}
                     controlMine={shown().controlMine}

@@ -754,7 +754,10 @@ Edge deployment remains outside the local platform milestone.
 
 The app HTTP Service carries native files, workflows, and other application calls.
 Web translates `/<project>/<app>/api/files` and `/<project>/<app>/api/flow` to the host paths `/api/<app>/files` and `/api/<app>/flow`.
-Web forwards the health probe to `/api/health` on the same Service.
+Web forwards `HEAD /<project>/<app>/api/health` to `/api/health` on the app Service.
+Use `https://<host>/<project>/<app>/api` as the base URL for the app OpenAPI paths.
+The browser app loads its assets and configuration from the mount.
+It sends identity requests to the host root.
 The upstream Host is the app Service DNS name.
 
 The Rust edge reads the live release and serves its bucket files.
@@ -792,7 +795,7 @@ Local platform deployment installs control without a UI upload. GCP integration 
 The control Service annotation contains the control host and Service address.
 The edge forwards `/api/` to the control Service and `/password/` to the identity password listener.
 The Rust web front serves platform UI files and generates its org configuration.
-Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
+Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and org control pages.
 
 ## Google Cloud edge
 
@@ -839,7 +842,7 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 Every other role is authored in the project and grants its stable operation references `<package>:<interface>/<operation>` while active.
 
 Give a role with `wamn grant-role`, and take it away with `wamn revoke-role`.
-Set `WAMN_APP_URL` to the full application URL, including `/<project>/<app>/`.
+Set `WAMN_APP_URL` to the application API base URL, including `/<project>/<app>/api`.
 Both verbs use that URL and the caller's session token.
 The target user is named by principal UUID:
 

@@ -9,7 +9,7 @@ import type { ViteUserConfig as UserConfig } from "vitest/config";
 const SOLID_VERSION = "2.0.0-rc.18";
 
 /** The part of a Vite configuration that `applicationConfig` writes. */
-export type ApplicationConfig = Required<Pick<UserConfig, "plugins" | "resolve" | "server" | "build">>;
+export type ApplicationConfig = Required<Pick<UserConfig, "base" | "plugins" | "resolve" | "server" | "build">>;
 
 /** What one application states about itself. */
 export interface ApplicationOptions {
@@ -19,27 +19,41 @@ export interface ApplicationOptions {
   readonly outDir: string;
   /** The port of the dev server. */
   readonly port: number;
+  /** The published app uses relative assets under its deployment mount. */
+  readonly mounted?: boolean;
   /** `serve` for the dev server, `build` for static files. Only `serve` contacts the installed platform. A build reads no deployment settings. */
   readonly command: "serve" | "build";
 }
 
-/** The installed application's origin, supplied by the development procedure. */
-function devConfiguration(): string {
+/** The installed application URL from the development procedure. */
+function devConfiguration(): { origin: string; mount: string } {
   const route = process.env["WAMN_ROUTE_URL"];
   if (route === undefined) throw new Error("set WAMN_ROUTE_URL to the installed application URL");
   const url = new URL(route);
   if (url.protocol !== "http:" && url.protocol !== "https:")
     throw new Error("the application URL must use HTTP or HTTPS");
-  return url.origin;
+  if (!/^\/[a-z0-9-]+\/[a-z0-9-]+\/?$/.test(url.pathname) || url.search || url.hash)
+    throw new Error("the application URL must end in /<project>/<app>/");
+  return { origin: url.origin, mount: url.pathname.replace(/\/?$/, "/") };
 }
 
-/** Preserve product routing and obtain browser settings from the deployed web service. */
-function proxy(target: string): Record<string, ProxyOptions> {
+/** Vite serves the app pages and assets. Web serves its API, configuration, and identity. */
+function proxy(origin: string, mount: string): Record<string, ProxyOptions> {
   return Object.fromEntries(
-    ["/password", "/api", "/config.json", "/wamn_control", "/oauth/callback"].map((path) => [
-      path,
-      { target, changeOrigin: true },
-    ]),
+    [
+      `${mount}api/`,
+      `^${mount}config\\.json(?:\\?|$)`,
+      "^/(?:\\?|$)",
+      "^/(?:invite|recover|reset)/?(?:\\?|$)",
+      "/urn:wamn:org:",
+      "/assets/",
+      "/platform-ui/",
+      "/password/",
+      "/api/",
+      "^/config\\.json(?:\\?|$)",
+      "/wamn_control/",
+      "^/oauth/callback(?:\\?|$)",
+    ].map((path) => [path, { target: origin, changeOrigin: true }]),
   );
 }
 
@@ -92,11 +106,20 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
-    plugins: [],
+    base: dev?.mount ?? (options.mounted ? "./" : "/"),
+    plugins:
+      dev === undefined
+        ? []
+        : [
+            {
+              name: "wamn-app-base",
+              transformIndexHtml: (html) => html.replace("<!--wamn-app-base-->", `<base href="${dev.mount}">`),
+            },
+          ],
     resolve: {},
     server: {
       port: options.port,
-      ...(dev === undefined ? {} : { proxy: proxy(dev) }),
+      ...(dev === undefined ? {} : { proxy: proxy(dev.origin, dev.mount) }),
       // Allow shared sources and pnpm packages outside the application.
       fs: { allow: [at("."), web, store] },
     },

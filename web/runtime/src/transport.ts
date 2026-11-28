@@ -50,7 +50,7 @@ export type TransportOptions = BearerOptions | CookieOptions;
 
 /** The options that every carrier shares. */
 interface CommonOptions {
-  /** Where the release is served. The generated route supplies the path. */
+  /** The API base URL. The generated route supplies the remaining path. */
   readonly baseUrl: string;
   /** The fetch to call. The global one is the default. */
   readonly fetch?: typeof globalThis.fetch;
@@ -533,7 +533,7 @@ export function createTransport(options: TransportOptions): Transport & Required
       signal?.addEventListener("abort", abort, { once: true });
       const timer = setTimeout(abort, 3_000);
       try {
-        const response = await call(`${options.baseUrl}/api/health`, {
+        const response = await call(`${options.baseUrl}/health`, {
           method: "HEAD",
           cache: "no-store",
           credentials: "omit",

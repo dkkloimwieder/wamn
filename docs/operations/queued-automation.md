@@ -1,7 +1,7 @@
 # Workflow operations
 
 Workflow commands connect to the application host and require its `admin` role.
-Set `WAMN_TOKEN` to the administrator's session token. Pass the application URL, including `/<project>/<app>/`, in `--host-url`.
+Set `WAMN_TOKEN` to the administrator's session token. Pass the application API base URL, including `/<project>/<app>/api`, in `--host-url`.
 
 ## Author and enable a workflow
 

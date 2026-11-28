@@ -28,6 +28,9 @@ pub struct TierArgs {}
 pub struct PgArgs {}
 
 pub async fn tier(root: &Path, _args: &TierArgs) -> anyhow::Result<()> {
+    let route =
+        std::env::var("WAMN_ROUTE_URL").context("set WAMN_ROUTE_URL to the Receiving mount")?;
+    let route = route.trim_end_matches('/').replace('\'', "'\\''");
     let version =
         wamn_platform_install::release_chart::chart_version(&root.join("deploy/charts/app"))?;
     let work = tempfile::Builder::new()
@@ -97,7 +100,7 @@ pub async fn tier(root: &Path, _args: &TierArgs) -> anyhow::Result<()> {
             "SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))",
         ).await?;
         let remote = format!(
-            "cd wamn && cargo xtask bench --host receiving.wamn.dev --pat-file ~/pat/operator-pat.json --call {call} --concurrency 16 --duration-secs 60 --tier tier-2 --db-url \"$(cat ~/pat/db-url)\" --output /tmp/wamn-bench-{call}.json"
+            "cd wamn && cargo xtask bench --base-url '{route}/api' --pat-file ~/pat/operator-pat.json --call {call} --concurrency 16 --duration-secs 60 --tier tier-2 --db-url \"$(cat ~/pat/db-url)\" --output /tmp/wamn-bench-{call}.json"
         );
         let text = process::output(
             root,

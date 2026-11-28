@@ -27,20 +27,20 @@ afterEach(() => {
 
 it("restores only the last user of the same application and environment", () => {
   stubStorage();
-  savedUser("wms", "dev").save(user("first"));
-  expect(savedUser("wms", "dev").load()).toEqual(user("first"));
-  expect(savedUser("other", "dev").load()).toBeUndefined();
-  expect(savedUser("wms", "prod").load()).toBeUndefined();
-  savedUser("wms", "dev").save(user("second"));
-  expect(savedUser("wms", "dev").load()?.userId).toBe("second");
-  savedUser("wms", "dev").clear();
-  expect(savedUser("wms", "dev").load()).toBeUndefined();
+  savedUser("/warehouse/wms/").save(user("first"));
+  expect(savedUser("/warehouse/wms/").load()).toEqual(user("first"));
+  expect(savedUser("/other/wms/").load()).toBeUndefined();
+  expect(savedUser("/warehouse/receiving/").load()).toBeUndefined();
+  savedUser("/warehouse/wms/").save(user("second"));
+  expect(savedUser("/warehouse/wms/").load()?.userId).toBe("second");
+  savedUser("/warehouse/wms/").clear();
+  expect(savedUser("/warehouse/wms/").load()).toBeUndefined();
 });
 
 it("ignores a saved user without session times", () => {
   stubStorage();
-  localStorage.setItem("wamn-user:wms:dev", "first");
-  expect(savedUser("wms", "dev").load()).toBeUndefined();
+  localStorage.setItem("wamn-user:/warehouse/wms/", "first");
+  expect(savedUser("/warehouse/wms/").load()).toBeUndefined();
 });
 
 it("allows the page to open when local storage refuses access", () => {
@@ -48,20 +48,20 @@ it("allows the page to open when local storage refuses access", () => {
     throw new Error("denied");
   };
   vi.stubGlobal("localStorage", { getItem: denied, setItem: denied, removeItem: denied });
-  expect(savedUser("wms", "dev").load()).toBeUndefined();
-  expect(() => savedUser("wms", "dev").save(user("user"))).not.toThrow();
-  expect(() => savedUser("wms", "dev").clear()).not.toThrow();
-  expect(savedView("wms", "dev").load("user")).toBeUndefined();
-  expect(() => savedView("wms", "dev").save({ userId: "user", held: [], admin: false })).not.toThrow();
+  expect(savedUser("/warehouse/wms/").load()).toBeUndefined();
+  expect(() => savedUser("/warehouse/wms/").save(user("user"))).not.toThrow();
+  expect(() => savedUser("/warehouse/wms/").clear()).not.toThrow();
+  expect(savedView("/warehouse/wms/").load("user")).toBeUndefined();
+  expect(() => savedView("/warehouse/wms/").save({ userId: "user", held: [], admin: false })).not.toThrow();
 });
 
 it("restores the saved view only for the user who saved it", () => {
   stubStorage();
   const view = { userId: "first", held: ["receiving.load_open_receipt_lines"], admin: false };
-  savedView("wms", "dev").save(view);
-  expect(savedView("wms", "dev").load("first")).toEqual(view);
-  expect(savedView("wms", "dev").load("second")).toBeUndefined();
-  expect(savedView("wms", "prod").load("first")).toBeUndefined();
+  savedView("/warehouse/wms/").save(view);
+  expect(savedView("/warehouse/wms/").load("first")).toEqual(view);
+  expect(savedView("/warehouse/wms/").load("second")).toBeUndefined();
+  expect(savedView("/warehouse/receiving/").load("first")).toBeUndefined();
 });
 
 it("uses the session defaults when no settings are saved", () => {

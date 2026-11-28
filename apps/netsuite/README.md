@@ -225,7 +225,8 @@ cargo xtask netsuite-live /private/netsuite/credentials.json wms dev \
 ```
 
 `wamn workflow run` admits a workflow through the host and prints its run ID.
-Pass `--host-url`, `--workflow-id`, `--run-as admin`, `--idempotency-key` and `--input`.
+Pass the application API base URL, including `/<project>/<app>/api`, in `--host-url`.
+Pass `--workflow-id`, `--run-as admin`, `--idempotency-key` and `--input`.
 Set `WAMN_TOKEN` or pass `--token`. A repeated call with the same workflow, key and input returns the first run ID.
 Read the result of a run from `wamn_run.run` in the project database.
 

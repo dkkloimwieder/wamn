@@ -6,6 +6,7 @@ export default defineConfig(({ command, mode }) => {
     root: import.meta.url,
     outDir: "../../target/wamn/wamn_receiving/web",
     port: 5182,
+    mounted: true,
     command: mode === "test" ? "build" : command,
   });
   const solid = solidApplication("Receiving");

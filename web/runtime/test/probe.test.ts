@@ -7,11 +7,15 @@ afterEach(() => vi.useRealTimers());
 describe("probe", () => {
   it.each([204, 500])("reports whether status %s is successful without sending credentials", async (status) => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status }));
-    const transport = createTransport({ baseUrl: "https://app.test", credential: "secret", fetch });
+    const transport = createTransport({
+      baseUrl: "https://dev.acme.example.test/warehouse/receiving/api",
+      credential: "secret",
+      fetch,
+    });
     expect(await transport.probe()).toBe(status === 204);
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, options] = fetch.mock.calls[0]!;
-    expect(String(url)).toBe("https://app.test/api/health");
+    expect(String(url)).toBe("https://dev.acme.example.test/warehouse/receiving/api/health");
     expect(options?.method).toBe("HEAD");
     expect(options?.cache).toBe("no-store");
     expect(options?.credentials).toBe("omit");

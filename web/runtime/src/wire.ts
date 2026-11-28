@@ -113,7 +113,7 @@ export interface InvokeOptions {
  */
 export interface Transport {
   invoke(request: WireRequest, options?: InvokeOptions): Promise<Outcome<JsonValue>>;
-  /** Whether the application origin answers its health probe within three seconds. */
+  /** Whether the application API answers its health probe within three seconds. */
   probe?(signal?: AbortSignal): Promise<boolean>;
   /**
    * Sends one write that carries many items, each with its own request

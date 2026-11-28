@@ -1,14 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { Shell } from "../src/shell";
-import { AUD, CONTROL, ADMIN, identity, open } from "./fixtures";
+import { AUD, CONTROL, MOUNT, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
   it.each([CONTROL, AUD])("renders an empty audience layout at %s and refuses unknown paths", async (aud) => {
     const { fetch } = identity(true);
-    window.history.pushState({}, "", `/${aud}`);
-    render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
-    expect(await screen.findByText(aud === CONTROL ? "ACME" : "DEV")).toBeDefined();
+    const home = aud === CONTROL ? `/${aud}` : MOUNT;
+    window.history.pushState({}, "", home);
+    render(() => (
+      <Shell title="Stub app" org="acme" {...(aud === AUD ? { mount: MOUNT } : {})} sections={[]} fetch={fetch} />
+    ));
+    expect(await screen.findByText(aud === CONTROL ? "ACME" : "STOCK")).toBeDefined();
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
@@ -19,8 +22,8 @@ describe("the app shell", () => {
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${aud}`);
-    window.history.pushState({}, "", `/${aud}`);
+    expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(home);
+    window.history.pushState({}, "", home);
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(screen.queryByRole("link", { name: "Go to audience home" })).toBeNull();
@@ -41,9 +44,9 @@ describe("the app shell", () => {
     expect(screen.queryByRole("combobox", { name: "Audience" })).toBeNull();
   });
 
-  it("refuses an address that names an environment of another org", async () => {
+  it("refuses a control address that names another org", async () => {
     const { state, fetch } = identity(false);
-    open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
+    open("/urn:wamn:org:other/projects", fetch);
     expect(await screen.findByRole("link", { name: "Choose an audience" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     {
@@ -68,7 +71,7 @@ describe("the app shell", () => {
       const observed = state.calls;
       expect(observed).toHaveProperty(["length"], 2);
       expect(observed).toHaveProperty(["0"], "/password/renew");
-      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+      expect(observed).toHaveProperty(["1"], `${MOUNT}api/wamn_control/permission/mine`);
     }
   });
 
@@ -80,7 +83,7 @@ describe("the app shell", () => {
       await screen.findByText("pallets screen");
       {
         const observed = state.bodies[0];
-        expect(observed).toHaveProperty(["aud"], AUD);
+        expect(observed).toHaveProperty(["aud"], CONTROL);
       }
       expect(state.requests[0]?.credentials).toBe("include");
       expect(new Headers(state.requests[1]?.headers).has("authorization")).toBe(false);
@@ -88,8 +91,8 @@ describe("the app shell", () => {
       {
         const observed = storage.mock.calls.map(([key]) => key).sort();
         expect(observed).toHaveProperty(["length"], 2);
-        expect(observed).toHaveProperty(["0"], "wamn-user:widgets:dev");
-        expect(observed).toHaveProperty(["1"], "wamn-view:widgets:dev");
+        expect(observed).toHaveProperty(["0"], `wamn-user:${MOUNT}`);
+        expect(observed).toHaveProperty(["1"], `wamn-view:${MOUNT}`);
       }
     } finally {
       storage.mockRestore();
@@ -139,7 +142,7 @@ describe("the app shell", () => {
       const observed = state.calls;
       expect(observed).toHaveProperty(["length"], 2);
       expect(observed).toHaveProperty(["0"], "/password/renew");
-      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+      expect(observed).toHaveProperty(["1"], `${MOUNT}api/wamn_control/permission/mine`);
     }
   });
 
@@ -155,7 +158,7 @@ describe("the app shell", () => {
       expect(observed).toHaveProperty(["length"], 6);
       expect(observed).toHaveProperty(["0"], "ACME");
       expect(observed).toHaveProperty(["1"], "WIDGETS");
-      expect(observed).toHaveProperty(["2"], "DEV");
+      expect(observed).toHaveProperty(["2"], "STOCK");
       expect(observed).toHaveProperty(["3"], "PALLETS");
       expect(observed).toHaveProperty(["4"], "A/B");
       expect(observed).toHaveProperty(["5"], "UPDATE");
@@ -168,7 +171,7 @@ describe("the app shell", () => {
       const observed = state.calls;
       expect(observed).toHaveProperty(["length"], 2);
       expect(observed).toHaveProperty(["0"], "/password/renew");
-      expect(observed).toHaveProperty(["1"], "/api/wamn_control/permission/mine");
+      expect(observed).toHaveProperty(["1"], `${MOUNT}api/wamn_control/permission/mine`);
     }
   });
 
@@ -258,7 +261,7 @@ describe("the app shell", () => {
 
       expect(screen.getAllByRole("heading")).toHaveLength(1);
       expect(screen.getAllByRole("link")).toHaveLength(1);
-      expect(screen.getByRole("link").getAttribute("href")).toBe(path.startsWith(`/${AUD}/`) ? `/${AUD}` : "/");
+      expect(screen.getByRole("link").getAttribute("href")).toBe(path.startsWith(MOUNT) ? MOUNT : "/");
     },
   );
 });

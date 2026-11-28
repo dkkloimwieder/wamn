@@ -55,7 +55,7 @@ impl Workflows<'_> {
         command
             .arg("workflow")
             .args(args)
-            .args(["--host-url", &self.app.env.app_url(APP)?]);
+            .args(["--host-url", &self.app.env.app_api_url(APP)?]);
         request::output(command).await
     }
 

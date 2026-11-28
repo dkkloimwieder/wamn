@@ -15,6 +15,7 @@ pub struct Args {
     credentials: PathBuf,
     project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
+    /// Application API base URL, including /<project>/<app>/api.
     host_url: String,
     record_id: String,
     query_file: PathBuf,

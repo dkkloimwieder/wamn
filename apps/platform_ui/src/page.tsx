@@ -88,10 +88,10 @@ export function Frame(props: DashboardShellProps): JSX.Element {
   );
 }
 
-export function NotFound(props: { home?: string; message?: string }): JSX.Element {
+export function NotFound(props: { home?: string }): JSX.Element {
   return (
     <EntryPage title="No page here">
-      <p>{props.message ?? "This address names no page."}</p>
+      <p>This address names no page.</p>
       <a style={{ color: "var(--ui-accent)" }} href={props.home ?? "/"}>
         {props.home ? "Go to audience home" : "Choose an audience"}
       </a>

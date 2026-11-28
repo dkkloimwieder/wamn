@@ -293,7 +293,7 @@ mod tests {
     use hyper_util::rt::TokioIo;
     use std::convert::Infallible;
 
-    const HOST_NAME: &str = "dev.acme.example.test";
+    const HOST_NAME: &str = "acme.example.test";
     const ACCESS_TOKEN: &str = "header.payload.signature";
 
     /// Pass an HTTP request through Hyper without opening a socket.
@@ -422,7 +422,11 @@ mod tests {
         for (sites, origin, allowed) in [
             (&["same-origin"][..], None, true),
             (&["none"][..], Some(other_origin), true),
-            (&["same-site"][..], Some(origin.as_str()), false),
+            (
+                &["same-site"][..],
+                Some("https://dev.acme.example.test"),
+                false,
+            ),
             (&["cross-site"][..], None, false),
             (&["unknown"][..], Some(origin.as_str()), false),
             (
@@ -444,7 +448,7 @@ mod tests {
             if let Some(origin) = origin {
                 request = request.header(ORIGIN, origin);
             }
-            let result = forwarded("/api/shop/x", request).await;
+            let result = forwarded("/shop/stock/api/x", request).await;
             if allowed {
                 let headers = result.unwrap();
                 assert_eq!(

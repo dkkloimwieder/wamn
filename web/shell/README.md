@@ -5,7 +5,13 @@ The package is named `@wamn/vite` and contains no UI components or application s
 
 [`vite.ts`](vite.ts) is the package entry `@wamn/vite`, and it holds the Vite policy of every Solid application.
 `solidApplication` supplies the Solid compiler, the browser resolution with one copy of Solid, the Solid version test and the test environment.
-`applicationConfig` supplies the development proxies, `/config.json`, and the build output directory.
+`applicationConfig` supplies the development proxies and the build output directory.
+Set `WAMN_ROUTE_URL` to the installed URL with its app mount.
+Open the local dev server at the same mount.
+The proxy sends mounted API and configuration requests to web. Org control and identity requests use host-root paths.
+Set `mounted: true` for a published app build.
+Put `<!--wamn-app-base-->` in the HTML head before relative asset references.
+Web replaces the marker with the mount so relative assets work on deep links.
 `workerBuild` writes the @wfe/sync worker as `sw.js` beside the pages, and `precacheManifest` gives the worker its file list.
 Each application keeps its entries, port, output directory, public assets and cache exclusions.
 

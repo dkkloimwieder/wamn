@@ -263,7 +263,7 @@ async fn owner(app: &App, args: &[&str]) -> anyhow::Result<()> {
     let mut command = app.env.org.command();
     command
         .args(args)
-        .args(["--host-url", &app.env.app_url(common::host::FIXTURE)?]);
+        .args(["--host-url", &app.env.app_api_url(common::host::FIXTURE)?]);
     let output = tokio::process::Command::from(command)
         .kill_on_drop(true)
         .output()

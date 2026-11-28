@@ -29,12 +29,12 @@ const SEED_PRINCIPAL: &str = "00000000-0000-0000-0000-000000000000";
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
-    /// The application environment host, such as `acme.wamn.dev` for prod.
+    /// The Host header to use when the URL connects through a port forward.
     #[arg(long)]
-    host: String,
-    /// Override the API base URL and send `--host` as the Host header.
+    host: Option<String>,
+    /// Application API base URL, including /<project>/<app>/api.
     #[arg(long)]
-    base_url: Option<String>,
+    base_url: String,
     /// The PAT Secret JSON that `provision-project-env` wrote, with the token
     /// at `.stringData.token`.
     #[arg(long)]
@@ -252,19 +252,24 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         .pointer("/stringData/token")
         .and_then(Value::as_str)
         .context("the PAT file holds .stringData.token")?;
+    let mut base = args.base_url;
+    base.truncate(base.trim_end_matches('/').len());
+    let uri: hyper::Uri = base.parse().context("parse --base-url")?;
+    let authority = uri.authority().context("--base-url must include a host")?;
     let mut headers = hyper::header::HeaderMap::new();
-    if args.base_url.is_some() {
-        headers.insert(hyper::header::HOST, args.host.parse()?);
-    }
+    let host = if let Some(host) = args.host {
+        headers.insert(hyper::header::HOST, host.parse()?);
+        host
+    } else {
+        authority.as_str().to_owned()
+    };
     let target = Arc::new(Target {
         client: wamn_http_client::HttpClient::builder()
             .default_headers(headers)
             .pool_max_idle_per_host(args.concurrency)
             .timeout(Duration::from_secs(30))
             .build()?,
-        base: args
-            .base_url
-            .unwrap_or_else(|| format!("https://{}/api", args.host)),
+        base,
         authorization: format!("Bearer {token}"),
     });
 
@@ -463,7 +468,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     slow.truncate(100);
     let calls = latencies.len();
     let result = Summary {
-        host: args.host,
+        host,
         call: args.call,
         tier: args.tier,
         concurrency: args.concurrency,

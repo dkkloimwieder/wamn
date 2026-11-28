@@ -125,8 +125,9 @@ The hexadecimal portion excludes `sha256:`.
 No environment coordinate or release digest selects the upload root.
 Two environments with the same web digest use the same root.
 
-The Rust web front generates `config.json` from the live release.
+The web front generates `/<project>/<app>/config.json` from the live release.
 Its fields are `org`, `project`, `release` and `web`.
+The mount also serves the index, assets, and any `sw.js` file from the selected bundle.
 The uploaded files contain no deployment coordinates.
 
 The command prints `<package> <bucket URL>/<root>/ written` after the first complete upload.

@@ -35,7 +35,7 @@ Their automated assertions stop at that missing step; they do not create data th
 ## Open the browser
 
 The installed application URL ends in `/<project>/wamn-receiving/`.
-The browser client and Vite proxy need application base path support to use it.
+Use that URL for `WAMN_ROUTE_URL` if you run Receiving through Vite.
 See the [web README](../../apps/wamn_receiving/web/README.md) for the screens and data prerequisites.
 
 ## Measure a change

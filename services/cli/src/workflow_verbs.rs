@@ -9,6 +9,7 @@ use wamn_package::canonical_name::CanonicalName;
 /// The application host and the administrator's bearer token.
 #[derive(Debug, Args)]
 pub struct Host {
+    /// Application API base URL, including /<project>/<app>/api.
     #[arg(long)]
     host_url: String,
     #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]

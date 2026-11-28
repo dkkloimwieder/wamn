@@ -11,6 +11,7 @@ export {
   type ShellSection,
   type ShellProps,
 } from "./shell";
-export { readConfig, CONFIG_PATH, type Config } from "./config";
+export { readAppConfig, readConfig, CONFIG_PATH, type Config } from "./config";
 export { fillPath, filledValues } from "./fill";
 export { Page, RecordLink } from "./page";
+export { administrationSections } from "./administration";

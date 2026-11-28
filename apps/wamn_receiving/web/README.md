@@ -30,7 +30,10 @@ The shell shows literal uppercase breadcrumbs after sign-in.
 Deploy Receiving on a disposable `kind` platform with the [development loop](../../../docs/operations/development-loop.md).
 Web serves Receiving under `/<project>/<app>/` on the environment host.
 Trust the local org certificate before you send requests to that host.
-The Vite proxy still forwards paths at the host root. It needs application base path support to reach a deployed app.
+Set `WAMN_ROUTE_URL` to the installed application URL, including `/<project>/<app>/`.
+Run `pnpm dev` from this directory.
+Open `http://localhost:5182/<project>/<app>/`.
+Vite serves the pages and assets locally. It forwards the app API, configuration, and host-root identity requests to the installed web service.
 
 `pnpm run build` writes the static files to `apps/target/wamn/wamn_receiving/web`.
 Use [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) to publish the client files.

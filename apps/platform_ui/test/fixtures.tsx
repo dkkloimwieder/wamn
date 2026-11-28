@@ -17,7 +17,8 @@ import { createSignal, flush, For } from "solid-js";
 
 import { Shell, RecordLink, type ScreenProps, type ShellSection } from "../src/index.js";
 
-export const AUD = "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7";
+export const AUD = "widgets/stock";
+export const MOUNT = `/${AUD}/`;
 
 /**
  * A screen that shows its name, and a button that reads the transport. A
@@ -183,7 +184,7 @@ export function identity(signedIn: boolean, mine: unknown = ADMIN, control: unkn
     state.calls.push(path);
     state.requests.push(init);
     state.bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
-    if (path.startsWith("/api/wamn_control/permission/mine")) {
+    if (path === `${MOUNT}api/wamn_control/permission/mine`) {
       return Promise.resolve(new Response(JSON.stringify([{ value: mine }]), { status: 200 }));
     }
     // A control session calls its host with no prefix.
@@ -212,10 +213,12 @@ export function identity(signedIn: boolean, mine: unknown = ADMIN, control: unkn
 
 export function open(path: string, fetch: typeof globalThis.fetch) {
   window.history.pushState({}, "", path);
+  const mounted = window.location.pathname.startsWith(MOUNT);
   return render(() => (
     <Shell
       title="Stub app"
       org="acme"
+      {...(mounted ? { mount: MOUNT } : {})}
       sections={[...SECTIONS, ADMINISTRATION]}
       controlSections={CONTROL_SECTIONS}
       fetch={fetch}

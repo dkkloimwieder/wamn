@@ -56,6 +56,8 @@ pub struct WebConfig {
     pub trusted_proxy_hops: usize,
 }
 
+const APP_BASE_MARKER: &str = "<!--wamn-app-base-->";
+
 fn web_root(row: &LiveRelease) -> Option<String> {
     if let Some(platform_ui) = &row.release.platform_ui {
         return Some(format!("platform-ui/sha256-{}", platform_ui.hex()));
@@ -86,7 +88,15 @@ impl Web {
             return Ok(empty(StatusCode::METHOD_NOT_ALLOWED));
         }
         let path = path.trim_start_matches('/');
-        if path.split('/').any(|part| part == "." || part == "..") || path.contains(['%', '\\']) {
+        let pinned_path = path.starts_with("clients/") || path.starts_with("platform-ui/");
+        let static_file = path == "config.json"
+            || path.starts_with("assets/")
+            || (path == "sw.js" && row.mount.is_some());
+        // An app screen can encode its route parameters. Object keys remain literal.
+        if path.split('/').any(|part| part == "." || part == "..")
+            || path.contains('\\')
+            || (path.contains('%') && (row.mount.is_none() || pinned_path || static_file))
+        {
             return Ok(empty(StatusCode::BAD_REQUEST));
         }
         let root = web_root(row);
@@ -96,9 +106,9 @@ impl Web {
         });
         let (file, pinned) = if let Some(file) = pinned {
             (file, true)
-        } else if path.starts_with("clients/") || path.starts_with("platform-ui/") {
+        } else if pinned_path {
             return Ok(empty(StatusCode::NOT_FOUND));
-        } else if path == "config.json" || path.starts_with("assets/") {
+        } else if static_file {
             (path, false)
         } else {
             ("index.html", false)
@@ -140,8 +150,20 @@ impl Web {
                     || content_type(file).to_owned(),
                     |value| value.as_ref().to_owned(),
                 );
+            let bytes = result.bytes().await?;
+            let bytes = if file == "index.html"
+                && let Some(mount) = row.mount.as_deref()
+                && let Ok(html) = std::str::from_utf8(&bytes)
+                && html.contains(APP_BASE_MARKER)
+            {
+                // Both segments of the mount are URL-safe registry slugs.
+                html.replacen(APP_BASE_MARKER, &format!(r#"<base href="{mount}">"#), 1)
+                    .into()
+            } else {
+                bytes
+            };
             File {
-                bytes: result.bytes().await?,
+                bytes,
                 content_type,
             }
         };
@@ -589,7 +611,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Require the live index and configuration of every declared host through the Service.
+/// Require the index and configuration of every web bundle, and probe each bundle's app API.
 ///
 /// # Errors
 /// Returns an error naming the host and path if a response is not successful.
@@ -603,15 +625,26 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
                 continue;
             }
             let mount = row.mount.as_deref().unwrap_or("/");
-            for path in [mount.to_owned(), format!("{mount}config.json")] {
+            let pages = [
+                (Method::GET, mount.to_owned()),
+                (Method::GET, format!("{mount}config.json")),
+            ];
+            let health = row
+                .mount
+                .as_ref()
+                .map(|mount| (Method::HEAD, format!("{mount}api/health")));
+            for (method, path) in pages.into_iter().chain(health) {
+                let health = method == Method::HEAD;
                 let request = hyper::Request::builder()
+                    .method(method)
                     .uri(format!("http://127.0.0.1:{LISTEN_PORT}{path}"))
                     .header(HOST, &host)
                     .body(Empty::new())?;
                 tokio::time::timeout(Duration::from_secs(30), async {
                     let response = client.request(request).await?;
                     ensure!(
-                        response.status() == StatusCode::OK,
+                        response.status() == StatusCode::OK
+                            || (health && response.status().is_success()),
                         "web probe {host}{path}: {}",
                         response.status()
                     );
@@ -723,6 +756,47 @@ mod tests {
 
     async fn body(response: Response<Full<Bytes>>) -> Bytes {
         response.into_body().collect().await.unwrap().to_bytes()
+    }
+
+    #[tokio::test]
+    async fn app_entry_and_deep_link_resolve_relative_assets_at_the_mount() {
+        let store = Arc::new(InMemory::new());
+        let web = Web {
+            store: Some(Arc::<InMemory>::clone(&store)),
+        };
+        let row = row('a');
+        let root = web_root(&row).unwrap();
+        put(
+            &store,
+            &root,
+            "index.html",
+            r#"<!doctype html><head><!--wamn-app-base--><script src="./assets/entry.js"></script></head>"#,
+        )
+        .await;
+        put(&store, &root, "assets/entry.js", "export {}").await;
+        put(&store, &root, "sw.js", "self.skipWaiting()").await;
+        for path in ["/", "/orders/a%2Fb/edit"] {
+            let response = web.answer(&row, path, &Method::GET).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = body(response).await;
+            let html = std::str::from_utf8(&bytes).unwrap();
+            assert!(html.contains(r#"<base href="/shop/stock/"><script src="./assets/entry.js">"#));
+        }
+        for (path, expected) in [
+            ("/assets/entry.js", "export {}"),
+            ("/sw.js", "self.skipWaiting()"),
+        ] {
+            let asset = web.answer(&row, path, &Method::GET).await.unwrap();
+            assert_eq!(asset.status(), StatusCode::OK);
+            assert_eq!(body(asset).await, expected);
+        }
+        assert_eq!(
+            web.answer(&row, "/assets/%2e%2e/entry.js", &Method::GET)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]

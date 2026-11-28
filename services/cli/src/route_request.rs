@@ -1,4 +1,4 @@
-//! Build requests for the CLI’s control routes.
+//! Build requests for the CLI’s control and application routes.
 
 #[path = "read_query.rs"]
 mod read_query;
@@ -62,4 +62,29 @@ pub(crate) async fn send(
             16 * 1024 * 1024,
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_app_request_keeps_the_mounted_api_base() {
+        let (_, attachment) = wamn_routes::HostRouteSet::App
+            .attachments()
+            .find(|(_, attachment)| attachment.route.operation == "role.create")
+            .expect("the application declares role.create");
+        let request = request(
+            "https://dev.acme.example.test/shop/stock/api/",
+            "token",
+            attachment,
+            &json!({"role":"clerk"}),
+        )
+        .expect("build a request for the mounted app");
+        assert_eq!(request.method(), hyper::Method::POST);
+        assert_eq!(
+            request.uri().path(),
+            "/shop/stock/api/wamn_control/role/create"
+        );
+    }
 }

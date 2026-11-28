@@ -655,7 +655,9 @@ The removed installer no longer prepares the seed database or operator PAT file.
 GCP deployment integration for these inputs remains unfinished.
 Use the [benchmark page](benchmark.md) for the independent benchmark procedure.
 
-`cargo xtask bench-tier` runs get and update for 60 seconds each at c16, which means 16 concurrent requests.
+Set `WAMN_ROUTE_URL` to the deployed Receiving URL, including `/<project>/<app>/`.
+Run `cargo xtask bench-tier` from the operator checkout.
+The command runs get and update for 60 seconds each with 16 concurrent requests.
 It writes one result file in its printed temporary directory.
 Each call records throughput, p50, p95, p99, calls, errors, and `pg_stat_statements` calls per request.
 The script resets database statement counts before each call.

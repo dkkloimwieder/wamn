@@ -4,20 +4,12 @@ import { Shell } from "./shell";
 import { readConfig } from "./config";
 import { userSections } from "./users";
 import { controlSections } from "./projects";
-import { administrationSections } from "./administration";
 
 const root = document.getElementById("app")!;
 readConfig().then(
   (config) =>
     render(
-      () => (
-        <Shell
-          title="WAMN"
-          {...config}
-          sections={administrationSections}
-          controlSections={[...controlSections, ...userSections]}
-        />
-      ),
+      () => <Shell title="WAMN" {...config} sections={[]} controlSections={[...controlSections, ...userSections]} />,
       root,
     ),
   (error: unknown) => {

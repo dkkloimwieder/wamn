@@ -196,10 +196,10 @@ impl Env {
         ))
     }
 
-    /// The public app mount for CLI calls through the org apex.
-    pub fn app_url(&self, app: &str) -> anyhow::Result<String> {
+    /// The public application API base through the org apex.
+    pub fn app_api_url(&self, app: &str) -> anyhow::Result<String> {
         Ok(format!(
-            "http://{}{}",
+            "http://{}{}api",
             self.public_host()?,
             name::app_mount(&self.triple.project, &app.parse()?)
         ))
@@ -252,7 +252,7 @@ impl App {
         let host = env.public_host()?;
         let mount = name::app_mount(&env.triple.project, &app.parse()?);
         // The fixture routes accept a PAT only, and an API service cannot hold `admin`.
-        caller_role(&env, source, package, &env.app_url(app)?).await?;
+        caller_role(&env, source, package, &env.app_api_url(app)?).await?;
         let secret = env.scratch.path().join("caller.json");
         let triple = &env.triple;
         let mut command = org.command();
