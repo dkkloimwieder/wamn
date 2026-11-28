@@ -83,7 +83,7 @@ Recommendation: A. The list of section 2 covers every env, so it needs no extra 
 
 Recommendation: A. A user with several roles in one project and no `admin` role has no active role today, and operation checks use the combined grants (F, `crates/authentication/src/authorization.rs:20`). That stays.
 
-## Changes if the recommendations are ruled
+## Changes
 
 - Schema: `identity.org_membership.default_project` and `default_app`, nullable, in the bootstrap SQL.
 - Wire: `GET /wamn_control/app/mine` and `PUT /wamn_control/app/default`, their OpenAPI, and the `wamn_control_org` SDK.
@@ -91,11 +91,15 @@ Recommendation: A. A user with several roles in one project and no `admin` role 
 - Images at E6.8: `control` and the Platform UI bundle. No `identity` rebuild.
 - Tests: control route tests for the list filter and the setting refusal, a live SQL test of the list query, Platform UI unit tests for the four cases of section 4, and one journey on kind that sets a default and reads it back through the routes.
 
-## Questions for rulings
+## Rulings
 
-1. Storage: two nullable columns on `identity.org_membership` (A)?
-2. List and setting: `GET /wamn_control/app/mine` over every env of the org, and `PUT /wamn_control/app/default`, with the wire of section 2 (A)? Eligibility is project access plus an active app with a browser route.
-3. Delivery: Platform UI at the host root, with the console linked for org administrators (A)?
-4. One eligible app opens at once, and no eligible app shows a message (section 4)?
-5. With no prod env, the apex lists the env-host apps as links (A)?
-6. Active role: no change, derived by the host per project (A)?
+Owner rulings of 2026-11-27. They replace the questions of the earlier draft.
+
+1. Storage: two nullable columns on `identity.org_membership`, `default_project` and `default_app`, with the project and app slug checks and no foreign key. A value that names no app the user can use is ignored.
+2. List and setting: `GET /wamn_control/app/mine` over every env of the org, and `PUT /wamn_control/app/default`, with the wire of section 2. An entry is eligible when the user has project access in that env and the env has an active app with a browser route. Control refuses a default that is not in the caller's own list.
+3. Delivery: Platform UI serves the landing page at the host root after sign-in. An org administrator sees a link to the org console.
+4. One eligible app opens at once. Several with a default among them open the default. Several with no default show the chooser. None shows a message and sign-out.
+5. With no prod env, the apex lists the user's apps on the env hosts as links. On an env host, the page uses only that host's entries.
+6. The active role stays derived by the host for each project. No change.
+
+The tests are those of the Changes section.
