@@ -437,6 +437,34 @@ pub struct ControlMineResult {
     pub total: Option<i32>,
 }
 
+/// The application that a member selects across the org's environments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AppChoice {
+    pub project: String,
+    pub app: String,
+}
+
+/// An application that a member can open in one environment.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListedApp {
+    pub env: String,
+    pub prod: bool,
+    pub project: String,
+    pub app: String,
+    pub url: String,
+}
+
+/// The member's eligible apps and their default when it is still eligible.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AppMineResult {
+    #[schemars(schema_with = "nullable::<AppChoice>")]
+    pub default: Option<AppChoice>,
+    pub apps: Vec<ListedApp>,
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvConfigureRequest {

@@ -31,6 +31,7 @@ import {
 import { createAddress, type Address } from "./address";
 import type { Config } from "./config";
 import { identityPage, SignInForm } from "./identity";
+import { Landing } from "./landing";
 import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
 
 const Layout = lazy(() => import("./layout"));
@@ -215,7 +216,7 @@ export function Shell(props: ShellProps): JSX.Element {
     if (props.mount !== undefined) {
       return path.startsWith(props.mount) ? props.mount.slice(1, -1) : undefined;
     }
-    return path.split("/")[1] === control ? control : undefined;
+    return path === "/" || path.split("/")[1] === control ? control : undefined;
   };
   return (
     <Loading>
@@ -228,7 +229,7 @@ export function Shell(props: ShellProps): JSX.Element {
           </Show>
         }
       >
-        {(Identity) => <Identity title={props.title} config={props} options={options} address={address} />}
+        {(Identity) => <Identity options={options} address={address} />}
       </Show>
     </Loading>
   );
@@ -391,46 +392,61 @@ function Session(props: ShellProps & { aud: string; options: SessionOptions; add
       }
     >
       <Show
-        when={view()}
+        when={props.mount !== undefined || props.address.url().pathname !== "/"}
         fallback={
-          <Frame header={<span>{props.title}</span>}>
-            <DashboardPanel>
-              <Show when={trouble()}>{(text) => <p role="alert">{text()}</p>}</Show>
-            </DashboardPanel>
-          </Frame>
+          <Landing
+            page={props.address.url()}
+            navigate={props.address.navigate}
+            aud={props.aud}
+            transport={transport}
+            orgAdmin={view()?.controlMine?.org_admin === true}
+            signOut={signOut}
+            openApp={(url) => window.location.replace(url)}
+          />
         }
       >
-        {(shown) => (
-          // A different user mounts the screens again, so no screen keeps the old user's state.
-          <Show when={userId()} keyed>
-            {(id) => (
-              <SessionContext
-                value={{
-                  userId: id,
-                  offline: () => state()?.status !== "signedIn",
-                  settings: settings(),
-                  onSignOut: (run) => void signOutRuns.add(run),
-                }}
-              >
-                <NotFoundBoundary home={homePath} path={props.address.url().pathname}>
-                  <Layout
-                    title={props.mount === undefined ? props.org : props.title}
-                    aud={props.aud}
-                    org={props.org}
-                    mount={props.mount}
-                    sections={shown().sections}
-                    holds={shown().holds}
-                    controlMine={shown().controlMine}
-                    transport={transport}
-                    address={props.address}
-                    signOut={signOut}
-                    routes={sections}
-                  />
-                </NotFoundBoundary>
-              </SessionContext>
-            )}
-          </Show>
-        )}
+        <Show
+          when={view()}
+          fallback={
+            <Frame header={<span>{props.title}</span>}>
+              <DashboardPanel>
+                <Show when={trouble()}>{(text) => <p role="alert">{text()}</p>}</Show>
+              </DashboardPanel>
+            </Frame>
+          }
+        >
+          {(shown) => (
+            // A different user mounts the screens again, so no screen keeps the old user's state.
+            <Show when={userId()} keyed>
+              {(id) => (
+                <SessionContext
+                  value={{
+                    userId: id,
+                    offline: () => state()?.status !== "signedIn",
+                    settings: settings(),
+                    onSignOut: (run) => void signOutRuns.add(run),
+                  }}
+                >
+                  <NotFoundBoundary home={homePath} path={props.address.url().pathname}>
+                    <Layout
+                      title={props.mount === undefined ? props.org : props.title}
+                      aud={props.aud}
+                      org={props.org}
+                      mount={props.mount}
+                      sections={shown().sections}
+                      holds={shown().holds}
+                      controlMine={shown().controlMine}
+                      transport={transport}
+                      address={props.address}
+                      signOut={signOut}
+                      routes={sections}
+                    />
+                  </NotFoundBoundary>
+                </SessionContext>
+              )}
+            </Show>
+          )}
+        </Show>
       </Show>
     </Show>
   );

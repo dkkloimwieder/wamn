@@ -36,6 +36,13 @@ common::journey! {
             .join("../../apps")
             .join("wamn_receiving");
         let env = Org::create().await?.apply(APP).await?;
+        // Kind serves the route metadata without an object store.
+        common::host::reapply(&env, |file| {
+            file["projects"][0]["apps"][APP]["client"] = json!({
+                "package": "wamn_receiving",
+                "web": format!("sha256:{:064x}", 1),
+            });
+        }).await?;
         env.deploy(&source, APP).await?;
 
         let org = &env.org;
@@ -96,6 +103,31 @@ common::journey! {
                 .status();
             ensure!(status == hyper::StatusCode::NOT_FOUND, "{host}{path} answered {status}");
         }
+        let choice = json!({"project": env.triple.project, "app": APP});
+        let saved = client
+            .put(format!("https://{prod_host}/wamn_control/app/default"))
+            .bearer_auth(&org.token)
+            .json(&json!([{"request_id": "save-default", "value": choice}]))
+            .send().await?;
+        ensure!(saved.status() == hyper::StatusCode::OK, "save default answered {}", saved.status());
+        let [saved]: [Value; 1] = saved.json().await?;
+        ensure!(saved["value"].is_object(), "save default refused: {saved}");
+
+        let listed = client
+            .get(format!("https://{prod_host}/wamn_control/app/mine"))
+            .bearer_auth(&org.token)
+            .send().await?;
+        ensure!(listed.status() == hyper::StatusCode::OK, "list apps answered {}", listed.status());
+        let [mut listed]: [Value; 1] = listed.json().await?;
+        let listed: wamn_routes::host_wire::AppMineResult = serde_json::from_value(listed["value"].take())?;
+        let default = listed.default.context("no default application")?;
+        assert_eq!(default.project, env.triple.project.as_str());
+        assert_eq!(default.app, APP);
+        let app = listed.apps.iter()
+            .find(|app| app.project == default.project && app.app == default.app && app.env == env.triple.env.as_str())
+            .context("the default application is missing on prod")?;
+        let mount = name::app_mount(&env.triple.project, &APP.parse()?);
+        assert_eq!(app.url, format!("https://{prod_host}{mount}"));
         Ok(())
     }
 }

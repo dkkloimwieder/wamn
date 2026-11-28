@@ -354,8 +354,7 @@ async function openOperation(action: string, withTarget = true) {
 describe("environment operation controls", () => {
   for (const [path, operation] of Object.entries(paths)) {
     const [, family, action] = /^\/wamn_control\/(app|schema)\/([^/]+)$/.exec(path) ?? [];
-    if (!family || !action) continue;
-    if (!("post" in operation)) throw new Error(`Missing POST contract for ${path}`);
+    if (!family || !action || !("post" in operation)) continue;
     const { properties } = operation.post.requestBody.content["application/json"].schema.items;
     if (!("value" in properties)) throw new Error(`Missing request value schema for ${path}`);
     const valueProperties = properties.value.properties;

@@ -134,6 +134,8 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `workflow.run` | Application admin. Takes `workflow_id`, `run_as`, `input_json` and `idempotency_key`. Admits a durable run and returns `run_id`. |
 | `wamn-control:connection/authorize@0.10.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
 | `wamn-control:control/mine@0.10.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
+| `wamn-control:app/mine@0.10.0` | Lists browser apps the caller can open in every active environment and returns the current eligible default. |
+| `wamn-control:app/default@0.10.0` | Sets or clears the caller's default app. The choice must be in the caller's list. [HTTP contract](control.md) |
 | `wamn-control:user/list@0.10.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
 | `wamn-control:user/create@0.10.0` | Takes `email` and `display_name`. Creates or reuses a user and activates its org membership without sending mail. Answers `principal_id` and `enrolled`. |
 | `wamn-control:user/invite@0.10.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
@@ -200,7 +202,8 @@ The native HTTP contract is version 0.10.0. `env.status` returns the whole resul
 
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
-Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
+The two landing routes are open to org members. App discovery uses current project access in each environment.
+Org administration routes need a current `org-admin` row of the caller in the token's org. They answer 403 `permission-denied` without it.
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
@@ -1166,14 +1169,15 @@ The [address owner](../../apps/platform_ui/src/address.ts) keeps the audience in
 A screen receives the transport, address parameters, query values, permitted actions, `open(path)`, and `close()`.
 The shell fills action paths from the address parameters.
 Reloading a screen renews its cookie session without browser storage. A screen without a session asks for the password at that address.
-The [identity pages](../../apps/platform_ui/src/identity.tsx) sign in directly to the org from `/config.json` and open its control address.
+The host root uses the org from `/config.json` to sign in. It opens the landing page after sign-in.
+A member opens an app from that page. An org administrator can open the org console from the chooser or empty page.
 A pasted application address uses the same org audience for login and renewal.
 
 The [page components](../../apps/platform_ui/src/page.tsx) wrap dashboards in wfe `Theme` and `DashboardShell` at viewport height.
-Sign-in, invitation, recovery, reset, and no-access pages use standalone `EntryPanel` pages.
+Sign-in, landing, invitation, recovery, reset, and no-access pages use standalone `EntryPanel` pages.
 Unknown or forbidden addresses and missing records use the same standalone layout, with a heading, explanation, and return link.
 These pages have no sidebar or breadcrumbs.
-An audience with no available screens keeps its dashboard header and offers a link to the org sign-in page, without a navigation pane.
+An audience with no available screens keeps its dashboard header and links to the landing page.
 
 The [left pane](../../apps/platform_ui/src/control-navigation.tsx) follows the hierarchy organization > project > environment.
 Its context switcher searches sibling choices and returns to the parent. Expandable groups expose the projects and environments that the caller administers.

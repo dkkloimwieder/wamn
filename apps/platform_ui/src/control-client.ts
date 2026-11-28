@@ -48,10 +48,13 @@ export const controlFields = {
 };
 
 export const appRoutes = {
+  mine: bind("app.mine", sdk.wamnControlAppMine_0100),
+  setDefault: bind("app.default", sdk.wamnControlAppDefault_0100),
   deploy: bind("app.deploy", sdk.wamnControlAppDeploy_0100),
   stop: bind("app.stop", sdk.wamnControlAppStop_0100),
   rollback: bind("app.rollback", sdk.wamnControlAppRollback_0100),
 };
+export type AppMineResult = OperationResult<typeof appRoutes.mine>;
 
 export const control = {
   mine: bind("control.mine", sdk.wamnControlControlMine_0100),
