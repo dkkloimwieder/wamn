@@ -1,21 +1,21 @@
 CREATE TABLE receiving.item (
-    id uuid CONSTRAINT item_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT item_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     item_number text NOT NULL CONSTRAINT item_item_number_key UNIQUE
 );
 
 CREATE TABLE receiving.location (
-    id uuid CONSTRAINT location_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT location_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     location_code text NOT NULL CONSTRAINT location_location_code_key UNIQUE
 );
 
 CREATE TABLE receiving.supplier (
-    id uuid CONSTRAINT supplier_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT supplier_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     name text NOT NULL CONSTRAINT supplier_name_check CHECK (char_length(btrim(name)) >= 1),
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE receiving.purchase_order (
-    id uuid CONSTRAINT purchase_order_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT purchase_order_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     purchase_order_number text NOT NULL
         CONSTRAINT purchase_order_purchase_order_number_key UNIQUE,
     supplier_id uuid NOT NULL
@@ -24,15 +24,19 @@ CREATE TABLE receiving.purchase_order (
     status text NOT NULL DEFAULT 'open',
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT purchase_order_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT purchase_order_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CONSTRAINT purchase_order_status_check
         CHECK (status IN ('open', 'complete', 'cancelled'))
 );
 
 CREATE TABLE receiving.purchase_order_line (
-    id uuid CONSTRAINT purchase_order_line_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT purchase_order_line_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     purchase_order_id uuid NOT NULL
         CONSTRAINT purchase_order_line_purchase_order_id_fkey
         REFERENCES receiving.purchase_order (id),
@@ -54,20 +58,22 @@ CREATE TABLE receiving.purchase_order_line (
 );
 
 CREATE TABLE receiving.receipt (
-    id uuid CONSTRAINT receipt_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT receipt_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     purchase_order_id uuid NOT NULL
         CONSTRAINT receipt_purchase_order_id_fkey
         REFERENCES receiving.purchase_order (id),
     receipt_reference text NOT NULL,
     occurred_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT receipt_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CONSTRAINT receipt_purchase_order_id_receipt_reference_key
         UNIQUE (purchase_order_id, receipt_reference)
 );
 
 CREATE TABLE receiving.receipt_line (
-    id uuid CONSTRAINT receipt_line_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT receipt_line_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     receipt_id uuid NOT NULL
         CONSTRAINT receipt_line_receipt_id_fkey
         REFERENCES receiving.receipt (id),

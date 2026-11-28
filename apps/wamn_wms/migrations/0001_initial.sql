@@ -1,5 +1,5 @@
 CREATE TABLE wms.product (
-    id uuid CONSTRAINT product_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT product_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     product_code text NOT NULL CONSTRAINT product_product_code_key UNIQUE,
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -7,7 +7,7 @@ CREATE TABLE wms.product (
 );
 
 CREATE TABLE wms.location (
-    id uuid CONSTRAINT location_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT location_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     location_code text NOT NULL CONSTRAINT location_location_code_key UNIQUE,
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -16,7 +16,7 @@ CREATE TABLE wms.location (
 );
 
 CREATE TABLE wms.packaging (
-    id uuid CONSTRAINT packaging_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT packaging_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     packaging_code text NOT NULL CONSTRAINT packaging_packaging_code_key UNIQUE,
     location_id uuid NOT NULL
         CONSTRAINT packaging_location_id_fkey
@@ -26,9 +26,13 @@ CREATE TABLE wms.packaging (
     status text NOT NULL,
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT packaging_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT packaging_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CONSTRAINT packaging_type_check
         CHECK (type IN ('pallet', 'tote', 'bin', 'case', 'loose')),
     CONSTRAINT packaging_status_check
@@ -37,7 +41,7 @@ CREATE TABLE wms.packaging (
 );
 
 CREATE TABLE wms.packaging_quantity (
-    id uuid CONSTRAINT packaging_quantity_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT packaging_quantity_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     packaging_id uuid NOT NULL
         CONSTRAINT packaging_quantity_packaging_id_fkey
         REFERENCES wms.packaging (id),
@@ -55,7 +59,7 @@ CREATE TABLE wms.packaging_quantity (
 );
 
 CREATE TABLE wms.inventory_transaction (
-    id uuid CONSTRAINT inventory_transaction_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT inventory_transaction_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     product_id uuid NOT NULL
         CONSTRAINT inventory_transaction_product_id_fkey
         REFERENCES wms.product (id),
@@ -71,7 +75,9 @@ CREATE TABLE wms.inventory_transaction (
     occurred_at timestamptz NOT NULL,
     reason_code text,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT inventory_transaction_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CONSTRAINT inventory_transaction_quantity_check CHECK (quantity > 0),
     CONSTRAINT inventory_transaction_from_status_check
         CHECK (from_status IN ('available', 'held')),

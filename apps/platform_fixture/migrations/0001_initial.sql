@@ -1,5 +1,5 @@
 CREATE TABLE inventory.widget_maker (
-    id uuid CONSTRAINT widget_maker_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT widget_maker_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     name text NOT NULL,
     edit_version int8 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -33,7 +33,7 @@ JOIN inventory.feed_order AS orders ON orders.id = line.order_id
 JOIN inventory.feed_item AS item ON item.id = line.item_id;
 
 CREATE TABLE inventory.widget (
-    id uuid CONSTRAINT widget_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT widget_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     code text NOT NULL CONSTRAINT widget_code_key UNIQUE,
     note text,
     maker_id uuid
@@ -46,20 +46,24 @@ CREATE TABLE inventory.widget (
 );
 
 CREATE TABLE inventory.widget_tag (
-    id uuid CONSTRAINT widget_tag_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT widget_tag_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     label text NOT NULL,
     edit_version int8 NOT NULL DEFAULT 1
 );
 
 CREATE TABLE inventory.numbered_label (
-    id uuid CONSTRAINT numbered_label_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid CONSTRAINT numbered_label_id_pkey PRIMARY KEY DEFAULT uuidv7(),
     number text NOT NULL CONSTRAINT numbered_label_number_key UNIQUE,
     stock_id text NOT NULL,
     edit_version bigint NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT numbered_label_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_by uuid NOT NULL
+        CONSTRAINT numbered_label_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT
 );
 
 CREATE TABLE inventory.counter (

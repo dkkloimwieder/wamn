@@ -20,9 +20,13 @@ CREATE TABLE receiving.quality_inspection (
     status text NOT NULL DEFAULT 'pending',
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL
+        CONSTRAINT quality_inspection_created_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
+    updated_by uuid NOT NULL
+        CONSTRAINT quality_inspection_updated_by_fkey
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     CONSTRAINT quality_inspection_status_check
         CHECK (status IN ('pending', 'approved'))
 );
