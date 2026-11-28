@@ -17,6 +17,7 @@ describe("identity pages", () => {
   it("posts the invitation code of the address and the password to enroll, then opens sign in", async () => {
     const seen: { url: string; body: unknown }[] = [];
     const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      if (url === "/password/renew") return Promise.resolve(new Response(null, { status: 401 }));
       seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
       return Promise.resolve(new Response(null, { status: 204 }));
     };
@@ -41,6 +42,7 @@ describe("identity pages", () => {
   it("links sign in to recovery, and posts the email to recover", async () => {
     const seen: { url: string; body: unknown }[] = [];
     const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      if (url === "/password/renew") return Promise.resolve(new Response(null, { status: 401 }));
       seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
       return Promise.resolve(new Response(null, { status: 202 }));
     };
@@ -65,6 +67,7 @@ describe("identity pages", () => {
   it("posts the reset code of the address, the email and the password to reset, then opens sign in", async () => {
     const seen: { url: string; body: unknown }[] = [];
     const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      if (url === "/password/renew") return Promise.resolve(new Response(null, { status: 401 }));
       seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
       return Promise.resolve(new Response(null, { status: 200 }));
     };
@@ -160,8 +163,7 @@ describe("identity refusals", () => {
     await signIn();
     const alert = await screen.findByRole("alert");
     expect(Number(alert.textContent?.match(/\d+/)?.[0])).toBe(401);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0]?.[0]).toBe("/password/session");
+    expect(fetch).toHaveBeenCalledWith("/password/session", expect.anything());
   });
 
   it("shows renewal failure on the same screen address", async () => {

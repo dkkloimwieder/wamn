@@ -10,8 +10,8 @@
 //! native package identity and route prefixes, as a generated package route does.
 
 use crate::host_wire::{
-    ApiServiceCreateRequest, ApiServiceCreateResult, AppDeployRequest, AppDeployResult,
-    AppRollbackRequest, AppStopRequest, AppUserListResult, CaptureGapCloseRequest,
+    ApiServiceCreateRequest, ApiServiceCreateResult, AppChoice, AppDeployRequest, AppDeployResult,
+    AppMineResult, AppRollbackRequest, AppStopRequest, AppUserListResult, CaptureGapCloseRequest,
     ConnectionActivateRequest, ConnectionAuthorizeRequest, ConnectionAuthorizeResult,
     ConnectionCopyRequest, ConnectionGetResult, ConnectionListResult,
     ConnectionSetCredentialRequest, ConnectionStatusResult, ConnectionSummary, ConnectionTest,
@@ -142,6 +142,10 @@ pub enum HostHandler {
     UserRoleRevoke,
     /// The caller's current control authority in the token's org.
     ControlMine,
+    /// List the caller's eligible browser apps and their default.
+    AppMine,
+    /// Set or clear the caller's default app.
+    AppDefault,
     /// The members of the org
     /// (docs/architecture/overview.md#organization-membership-and-administration).
     UserList,
@@ -1255,6 +1259,30 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
+        operation: "app.mine",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::AppMine,
+        schemas: schemas::<Empty, AppMineResult>,
+        write_transaction: false,
+        refusals: &[PermissionDenied],
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "app.default",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::AppDefault,
+        schemas: schemas::<Option<AppChoice>, Empty>,
+        write_transaction: true,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("not_found", None),
+        ],
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
         operation: "control.mine",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
@@ -1744,7 +1772,10 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachm
                     &route.operation.parse().expect("fixed local host operation"),
                 )
                 .expect("fixed registered host operation");
-                let method = if route.type_.is_read() { "GET" } else { "POST" };
+                let method = match route.handler {
+                    HostHandler::AppDefault => "PUT",
+                    _ => route.type_.http_method(),
+                };
                 let modes = match route.set {
                     HostRouteSet::App => {
                         json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE])
@@ -1789,6 +1820,9 @@ impl HostRouteSet {
             .collect();
         let paths = self.attachments().map(|(_, attachment)| {
             let route = attachment.route;
+            let path = attachment.definition["route"]["path"].as_str().expect("native route path");
+            let method = attachment.definition["route"]["method"].as_str()
+                .expect("native route method").to_ascii_lowercase();
             let read = route.type_.is_read();
             let (input, output) = (route.schemas)();
             let mut errors = Vec::new();
@@ -1834,8 +1868,7 @@ impl HostRouteSet {
                     "required": true, "content": media_type(wire_array(wire_item("value", input, true)))
                 });
             }
-            let path = attachment.definition["route"]["path"].as_str().expect("native route path");
-            (path, json!({ (if read { "get" } else { "post" }): operation }))
+            (path, json!({(method): operation}))
         }).collect::<BTreeMap<_, _>>();
         json!({"openapi": "3.1.0", "info": {"title": PACKAGE, "version": VERSION}, "paths": paths})
     }

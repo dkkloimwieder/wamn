@@ -4,13 +4,11 @@ import { FieldError, Input } from "@wfe/components/fields";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
 import { emailError } from "./email";
-import { enroll, recover, resetPassword, signIn, type SessionOptions } from "@wamn/web-runtime";
+import { enroll, recover, resetPassword, type SessionOptions } from "@wamn/web-runtime";
 import type { Address } from "./address";
-import type { Config } from "./config";
 import { EntryPage, NavigationLink } from "./page";
 
 interface IdentityProps {
-  readonly title: string;
   readonly options: SessionOptions;
   readonly address: Address;
 }
@@ -78,23 +76,6 @@ export function SignInForm(props: {
       </NavigationLink>
       <Show when={!form.errors.form && props.trouble}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
     </>
-  );
-}
-
-/** Sign in directly to the org this deployment serves. */
-function OrgSignIn(props: IdentityProps & { config: Config }): JSX.Element {
-  return (
-    <EntryPage title="Sign in">
-      <SignInForm
-        address={props.address}
-        trouble={null}
-        submit={async (email, password, context) => {
-          const aud = `urn:wamn:org:${props.config.org}`;
-          await signIn(email, password, aud, props.options);
-          if (!context.signal.aborted) props.address.navigate(`/${aud}`);
-        }}
-      />
-    </EntryPage>
   );
 }
 
@@ -222,14 +203,13 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
   );
 }
 
-const pages = new Map<string, Component<IdentityProps & { config: Config }>>([
-  ["", OrgSignIn],
+const pages = new Map<string, Component<IdentityProps>>([
   ["/invite", AcceptInvitation],
   ["/recover", RecoverPassword],
   ["/reset", ResetPassword],
 ]);
 
 /** The identity pages own their address table. */
-export function identityPage(pathname: string): Component<IdentityProps & { config: Config }> | undefined {
+export function identityPage(pathname: string): Component<IdentityProps> | undefined {
   return pages.get(pathname.replace(/\/$/, ""));
 }

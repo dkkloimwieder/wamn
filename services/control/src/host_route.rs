@@ -11,7 +11,7 @@ use wamn_identity::identity::control::{control_projects_page, is_org_admin};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
-use wamn_routes::host_wire::{ControlMineResult, ControlMineResultProject};
+use wamn_routes::host_wire::{AppChoice, ControlMineResult, ControlMineResultProject};
 
 use serde_json::{Value, json};
 use wamn_app::ingress::AuthenticatedCaller;
@@ -23,8 +23,10 @@ use wamn_authentication::paging::Order;
 use wamn_identity_client::users::UserClient;
 
 use crate::Writer;
-use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authorization};
+use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authorization, parse};
 use crate::execution::Execution;
+
+mod landing;
 
 #[cfg(test)]
 mod tests;
@@ -162,6 +164,28 @@ impl HostRouteDelivery {
             org,
         } = &self.handlers;
         match attachment.route.handler {
+            HostHandler::AppMine => {
+                let result = landing::mine(control, org, principal).await?;
+                Ok(serde_json::to_value(result).map_err(anyhow::Error::from)?)
+            }
+            HostHandler::AppDefault => {
+                let choice: Option<AppChoice> = parse(payload)?;
+                let updated = landing::set_default(
+                    writer,
+                    org,
+                    principal,
+                    attachment.operation.as_str(),
+                    choice.as_ref(),
+                )
+                .await?;
+                if !updated {
+                    return Err(Refusal::Declared {
+                        code: "not_found",
+                        detail: json!({"field": "app"}),
+                    });
+                }
+                Ok(json!({}))
+            }
             HostHandler::ControlMine => {
                 let mut transaction =
                     wamn_identity::identity::transaction::read_pool(control, principal).await?;
@@ -238,7 +262,7 @@ impl HostRouteDelivery {
 /// read carries its input as the request element, and a write carries a request id and
 /// its input under `value`, as every generated route takes them. Any other
 /// payload is `None`.
-fn request_element(payload: &str, read: bool) -> Option<(Option<String>, Value)> {
+fn request_element(payload: &str, attachment: &HostAttachment) -> Option<(Option<String>, Value)> {
     let Ok(Value::Array(request_elements)) = serde_json::from_str::<Value>(payload) else {
         return None;
     };
@@ -246,7 +270,7 @@ fn request_element(payload: &str, read: bool) -> Option<(Option<String>, Value)>
     else {
         return None;
     };
-    if read {
+    if attachment.route.type_.is_read() {
         return Some((None, Value::Object(request_element)));
     }
     let Some(Value::String(request_id)) = request_element.remove("request_id") else {
@@ -255,7 +279,9 @@ fn request_element(payload: &str, read: bool) -> Option<(Option<String>, Value)>
     let value = request_element
         .remove("value")
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-    (request_element.is_empty() && !request_id.is_empty() && value.is_object())
+    let valid_value = value.is_object()
+        || (attachment.route.handler == HostHandler::AppDefault && value.is_null());
+    (request_element.is_empty() && !request_id.is_empty() && valid_value)
         .then_some((Some(request_id), value))
 }
 
@@ -290,8 +316,7 @@ impl HostRouteDelivery {
             return report(Err(DeliveryError::InvalidRequest));
         }
         let caller = caller.expect("a resolved host route has its caller");
-        let read = attachment.route.type_.is_read();
-        let Some((request_id, input)) = request_element(&request.payload, read) else {
+        let Some((request_id, input)) = request_element(&request.payload, attachment) else {
             return report(Err(DeliveryError::InvalidPayload));
         };
         // The answer is the one outcome of the one request element, as a generated
@@ -346,7 +371,7 @@ impl HostRouteDelivery {
         }) else {
             return json_response(404, &json!({"error":{"code":"route-not-found"}}));
         };
-        if attachment.route.type_.http_method() != request.method().as_str() {
+        if attachment.definition["route"]["method"].as_str() != Some(request.method().as_str()) {
             return json_response(405, &json!({"error":{"code":"method-not-allowed"}}));
         }
         let headers = request

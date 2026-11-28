@@ -14,6 +14,12 @@ The shell passes permitted route actions through `ScreenProps.actions`, with rou
 Receiving renders those actions through the table `toolbarActions` binding.
 
 Session renewal and the cookie transport retain one owner in `web/runtime`.
+After sign-in, the host root opens the only available app or the saved default.
+When several apps are available, the chooser lets you open an app or save it as the default.
+When no apps are available, the root offers sign-out.
+If the org apex has no available app, the root links to available apps on environment hosts.
+The chooser and empty page give org administrators a link to the org console.
+
 DashboardShell and DashboardPanel frame dashboard screens.
 Unknown addresses and missing details show one standalone EntryPanel with a heading, one sentence, and a return link.
 These pages have no dashboard, sidebar, header, breadcrumbs, or form.
@@ -71,7 +77,7 @@ The control page reads `/config.json`.
 An app page reads `config.json` under its mount and sends API requests to `/<project>/<app>/api`.
 Both sign in through `/password/session` with `aud=urn:wamn:org:<org>`.
 There is no environment chooser or discovery password check.
-The shell opens the org's control address after login. Pasted application addresses use the same org token.
+Pasted application addresses use the same org token.
 Breadcrumbs appear on dashboard screens and use literal uppercase text, including record names.
 Identity screens omit breadcrumbs.
 An audience with no available screens shows an empty-state card with a link to the org sign-in page.

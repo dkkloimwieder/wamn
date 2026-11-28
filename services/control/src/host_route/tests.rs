@@ -181,6 +181,100 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn landing_lists_browser_apps_with_project_access_and_refuses_other_defaults()
+-> anyhow::Result<()> {
+    let system = wamn_test_infrastructure::database::system().await?;
+    let mut admin = system.admin().await?;
+    let org: OrgId = "acme".parse()?;
+    let login = system.org_login(wamn_role::CONTROL_ROLE)?;
+    let database = system
+        .login_url(login.login.as_str(), &login.password)?
+        .to_string();
+    let caller: PrincipalId = "00000000-0000-0000-0000-000000000001".parse()?;
+    let mut seed =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::raw_sql(
+        "INSERT INTO registry.project (org, id) VALUES ('acme', 'stock');
+         SELECT registry.provision_env('acme', 'dev');
+         SELECT registry.provision_env('acme', 'qa');
+         SELECT registry.provision_env('acme', 'private');
+         INSERT INTO registry.project_env (org, env, project, secret_name, instance_suffix)
+           SELECT org, env, 'stock', 'fixture-only', 'a1b2c3d4'
+           FROM registry.env WHERE org = 'acme';
+         INSERT INTO identity.principal (id, type, subject, email, display_name)
+           VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'member@example.invalid',
+                   'member@example.invalid', 'Member');
+         INSERT INTO identity.org_membership (principal_id, org, default_project, default_app)
+           VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'stock', 'restricted');
+         INSERT INTO identity.project_env_membership (principal_id, org, project, env)
+           SELECT '00000000-0000-0000-0000-000000000001', org, project, env
+           FROM registry.project_env WHERE org = 'acme' AND env IN ('dev', 'qa');
+         INSERT INTO registry.env_app (org, env, project, app, client_package, client_web)
+           SELECT 'acme', env, 'stock', app, 'stock', 'sha256:' || repeat('1', 64)
+           FROM (VALUES ('dev', 'receiving'), ('qa', 'receiving'), ('private', 'restricted'))
+                AS apps(env, app);
+         INSERT INTO registry.env_app (org, env, project, app)
+           VALUES ('acme', 'dev', 'stock', 'api-only');",
+    )
+    .execute(&mut *seed)
+    .await?;
+    seed.commit().await?;
+
+    let (authenticator, tokens) = control_sessions(&mut admin, &org, &[caller]).await?;
+    let (address, _server) = serve_control_http(database, org, authenticator).await?;
+    let (status, mut result) =
+        request(address, &tokens[0], "GET /wamn_control/app/mine", "").await?;
+    assert_eq!(status, 200, "{result}");
+    let value = result[0]["value"].take();
+    assert_eq!(value.get("default"), Some(&Value::Null));
+    let result: wamn_routes::host_wire::AppMineResult = serde_json::from_value(value)?;
+    let listed: HashSet<_> = result
+        .apps
+        .iter()
+        .map(|app| (app.env.as_str(), app.app.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        HashSet::from([("dev", "receiving"), ("qa", "receiving")])
+    );
+
+    for app in ["restricted", "api-only"] {
+        let (status, result) = request(
+            address,
+            &tokens[0],
+            "PUT /wamn_control/app/default",
+            &serde_json::json!([{"request_id": app, "value": {"project": "stock", "app": app}}])
+                .to_string(),
+        )
+        .await?;
+        assert_eq!(status, 200);
+        assert_eq!(result[0]["request_id"], app);
+        assert_eq!(result[0]["error"]["code"], "not_found");
+        assert_eq!(result[0]["error"]["detail"]["field"], "app");
+    }
+    let (status, cleared) = request(
+        address,
+        &tokens[0],
+        "PUT /wamn_control/app/default",
+        r#"[{"request_id":"clear","value":null}]"#,
+    )
+    .await?;
+    assert_eq!(status, 200);
+    assert_eq!(cleared[0]["request_id"], "clear");
+    assert!(cleared[0]["value"].is_object(), "{cleared}");
+    let stored: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT default_project, default_app FROM identity.org_membership
+         WHERE org = 'acme' AND principal_id = $1",
+    )
+    .bind(uuid::Uuid::from(caller))
+    .fetch_one(&mut admin)
+    .await?;
+    assert_eq!(stored, (None, None));
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "requires: docker, input:web-install, bin:pnpm"]
 async fn generated_org_client_live() -> anyhow::Result<()> {
     use wamn_identity::identity::{create_or_reuse_user, org::invite_member};

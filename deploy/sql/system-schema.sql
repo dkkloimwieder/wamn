@@ -290,6 +290,13 @@ CREATE TABLE identity.org_membership (
     org            text NOT NULL
         REFERENCES registry.org (id) ON DELETE RESTRICT,
     active         boolean NOT NULL DEFAULT true,
+    default_project text CHECK (default_project ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
+        AND char_length(default_project) <= 40
+        AND default_project <> 'wamn' AND default_project NOT LIKE 'wamn-%'
+        AND default_project NOT IN ('api', 'password', 'oauth', 'assets', 'clients',
+                                    'platform-ui', 'healthz', 'invite', 'recover', 'reset')),
+    default_app text CHECK (default_app ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
+        AND char_length(default_app) <= 40),
     created_at     timestamptz NOT NULL,
     created_by     uuid NOT NULL,
     updated_at     timestamptz NOT NULL,

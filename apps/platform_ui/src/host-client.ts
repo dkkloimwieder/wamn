@@ -16,7 +16,7 @@ interface HostOperation {
   "x-wamn-contract": ResponseContract;
 }
 
-type HostDocument = { paths: Record<string, { get?: HostOperation; post?: HostOperation }> };
+type HostDocument = { paths: Record<string, { get?: HostOperation; post?: HostOperation; put?: HostOperation }> };
 type SdkOperation = (...args: never[]) => Promise<unknown>;
 
 type Members<T> = unknown extends T
@@ -53,10 +53,11 @@ function binding(template: string, operation: HostOperation, method: string): Op
 
 export function hostOperations(document: unknown) {
   const bindings = new Map<string, OperationBinding>();
-  for (const [path, { get, post }] of Object.entries((document as HostDocument).paths)) {
+  for (const [path, { get, post, put }] of Object.entries((document as HostDocument).paths)) {
     const name = path.split("/").slice(-2).join(".");
     if (get) bindings.set(name, binding(path, get, "GET"));
     if (post) bindings.set(name, binding(path, post, "POST"));
+    if (put) bindings.set(name, binding(path, put, "PUT"));
   }
 
   return function bind<F extends SdkOperation>(name: string, operation: F) {

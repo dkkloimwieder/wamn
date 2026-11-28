@@ -33,6 +33,15 @@ Control listens on port 8080. The org Service forwards port 80 to the named `htt
 Control derives the JWKS URL and org audience and verifies EdDSA signatures.
 The registry provides the environment namespace for Job submission.
 
+`GET /wamn_control/app/mine` lists browser apps the caller can open in active environments.
+Each entry has `env`, `prod`, `project`, `app`, and the public `url`.
+The outcome value includes `default`, which is null when the saved choice has no eligible entry.
+
+`PUT /wamn_control/app/default` takes `project` and `app` in the request item value. Use a null value to clear the choice.
+It updates the caller's own org membership and returns an empty object in the outcome value.
+If the choice is outside the caller's list, the outcome contains `error.code` set to `not_found` and `error.detail.field` set to `app`.
+Control reads and writes the preference through its existing grants. The system reader sees only the membership admission fields.
+
 Control authorizes the target and submits the operation Jobs.
 It puts each request in an immutable ConfigMap owned by its Job. For a journaled command, the ConfigMap also carries the command ID and authenticated actor.
 The worker mounts the request and reads applied project configuration from the registry.
