@@ -169,8 +169,8 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
     sqlx::raw_sql(
         "INSERT INTO platform.connection
              (id, name, integration_type, auth_type, target_id, active_generation, service_principal_id)
-         VALUES ('00000000-0000-0000-0000-000000000001', 'plain', 'http', 'none', gen_random_uuid(), 1, gen_random_uuid()),
-                ('00000000-0000-0000-0000-000000000002', 'authenticated', 'http', 'api_key', gen_random_uuid(), 1, gen_random_uuid());
+         VALUES ('00000000-0000-0000-0000-000000000001', 'plain', 'http', 'none', uuidv7(), 1, uuidv7()),
+                ('00000000-0000-0000-0000-000000000002', 'authenticated', 'http', 'api_key', uuidv7(), 1, uuidv7());
          INSERT INTO platform.credential (id, connection_id, store, ref, version)
          VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002', 'k8s', 'fixture-only', '1');
          INSERT INTO platform.connection_generation (connection_id, generation, parameters, credential_id)
@@ -181,9 +181,9 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
                  decode('03','hex'),'fixture','-infinity',now());
          INSERT INTO platform.connection_event
              (connection_id,generation,principal_id,event_type,outcome)
-         VALUES ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'token_refresh','failed'),
-                ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'token_refresh','succeeded'),
-                ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'oauth_callback','refused');",
+         VALUES ('00000000-0000-0000-0000-000000000002',1,uuidv7(),'token_refresh','failed'),
+                ('00000000-0000-0000-0000-000000000002',1,uuidv7(),'token_refresh','succeeded'),
+                ('00000000-0000-0000-0000-000000000002',1,uuidv7(),'oauth_callback','refused');",
     )
     .execute(&mut *transaction)
     .await?;

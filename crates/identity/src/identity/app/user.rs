@@ -98,7 +98,7 @@ pub async fn write_service(
     }
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"INSERT INTO platform."user" (id, issuer, sub, type, email, display_name)
-           VALUES (gen_random_uuid(), 'wamn', $1, 'service', $2, $3)
+           VALUES (uuidv7(), 'wamn', $1, 'service', $2, $3)
            ON CONFLICT (issuer, sub) DO NOTHING RETURNING id"#,
     )
     .bind(&subject)

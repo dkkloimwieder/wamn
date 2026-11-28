@@ -172,7 +172,9 @@ Application handlers of custom operations retain business rules, transaction seq
 
 A generated CRUD operation needs no authored Rust, WIT, route entry, or declaration entry.
 
-UUID keys require a client id on create.
+Generated CRUD requires the client to supply a UUID key on create.
+A UUID key that the database generates defaults to `uuidv7()`.
+The build admits `uuidv7()`, `gen_random_uuid()`, and `CURRENT_TIMESTAMP` as default functions.
 Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`.
 The build refuses a plain integer key.
 The database generates the integer id, and create returns it.
@@ -709,7 +711,11 @@ Every stamp in one transaction carries the same instant, and that instant is not
 - A delete gets no stamp.
 - A write with no bound actor raises SQLSTATE `55000` with the message `actor-required`, for every column selection.
 
-The function reads no user row, and no stamp column has a foreign key.
+In a project database, `created_by`, `updated_by`, and `deleted_by` reference `platform."user"(id)`.
+In the system database, `created_by` and `updated_by` reference `identity.principal(id)`.
+Both sets of foreign keys use `ON DELETE RESTRICT` and apply to the principal tables themselves.
+PostgreSQL refuses a stamped write if the bound actor has no principal row in that database.
+Each `<relation>_history` table records `changed_by` without a foreign key.
 The platform trigger functions read `wamn_authority.current_principal_id()`.
 Generated statements read it too: a create fills each actor field, an update fills the `updated_by` actor field, and a tombstone delete sets `deleted_by`.
 `wamn_history.log_row_change` reads `(wamn_authority.current_identity()).operation` to record attribution.
@@ -736,7 +742,7 @@ It writes with the authority of the writer, so the `current_user` project base g
 An entry has these columns:
 
 - `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
-- `id`: the id of the entry, a random `uuid` that PostgreSQL generates. A read that shows entries in a table keys its rows on it.
+- `id` identifies the entry. PostgreSQL generates it with `uuidv7()`. A table that shows these entries uses it as the row key.
 - `project_id`: the project of the row, only in a legacy history table under a project base grants.
 - `row_key`: a JSONB object of the primary key columns.
 - `type`: `insert`, `update`, or `delete`.
@@ -993,7 +999,7 @@ Environment staging, connection administration, local development bindings, and 
 ### Files
 
 `platform.file` records one owning application and the connection generation that stored its bytes.
-Application tables can reference `platform.file(id)`, as they reference `platform.external_system(id)`.
+Application tables can reference `platform.file(id)`, `platform.external_system(id)`, and `platform."user"(id)`.
 Connection deactivation preserves these references. A foreign key refuses deletion of a referenced file.
 Application roles read file metadata but cannot insert, update, or delete it.
 File rows use the standard stamps and unlimited history.
@@ -1209,7 +1215,6 @@ The bootstrap invitation writes system membership. The environment lifecycle pro
 A session requires an active `platform."user"` row in the project environment.
 The caller sees `permission-denied`.
 The host reads the user row and active roles when it resolves the session's grants. [Auth memory](execution.md#auth-memory)
-There is still no foreign key on a stamp column.
 Application SQL cannot replace the host caller. A second identity insert fails, and application logins cannot update or delete identity rows.
 Administrative SQL still controls its own attribution.
 
@@ -1308,7 +1313,7 @@ These columns identify the source system and its record, independently of the co
 The REST consumer fixture records this pair alongside its local key and name.
 
 Package verification supplies an empty relation with the public provenance key.
-It reads no registry. Introspection permits this UUID reference outside the package schemas and still refuses other external table references.
+It reads no registry. Introspection permits references to the public keys of `platform.external_system`, `platform.file`, and `platform."user"`.
 Package migration grants schema access and REFERENCES only while the owner creates this foreign key, then removes those temporary grants.
 
 Database connection configuration contains no password. One native basic-auth Secret stores each role's username and password. SQLx resolves that Secret and the cluster CA in the login’s namespace. Operator connections also require verified TLS.

@@ -11,7 +11,7 @@ use wamn_connection::administration::{
 };
 use wamn_connection::connection_credentials::{StoreVersion, WriteCredentials};
 use wamn_connection::project_connections::Administration;
-use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_kubernetes::kubernetes::CredentialSecret;
 use wamn_postgres::provisioning_transaction::provisioning_transaction;
 use wamn_registry::OrgId;
@@ -68,7 +68,7 @@ async fn command(
         &mut database,
         |_| unreachable!("these host connections have no wasm authority"),
         Request {
-            caller: PrincipalId::from(Uuid::nil()),
+            caller: PlatformComponent::Provisioning.principal_id(),
             org: &org,
             operation,
             payload: payload.clone(),
@@ -131,7 +131,7 @@ async fn deactivation_keeps_history_and_activation_writes_a_fresh_generation() -
     let mut tx = provisioning_transaction(&mut project).await?;
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-         VALUES ('invoices','http','oauth2_authorization_code',gen_random_uuid(),1,gen_random_uuid()) RETURNING id",
+         VALUES ('invoices','http','oauth2_authorization_code',uuidv7(),1,uuidv7()) RETURNING id",
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -175,7 +175,7 @@ async fn deactivation_keeps_history_and_activation_writes_a_fresh_generation() -
     .await?;
     sqlx::query(
         "INSERT INTO platform.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
-         VALUES ('fixture',$1,$2,decode('01','hex'),decode('02','hex'),decode('03','hex'),'fixture',gen_random_uuid(),now())",
+         VALUES ('fixture',$1,$2,decode('01','hex'),decode('02','hex'),decode('03','hex'),'fixture',wamn_authority.current_principal_id(),now())",
     )
     .bind(id)
     .bind(active_generation)
@@ -296,7 +296,7 @@ async fn deactivation_keeps_history_and_activation_writes_a_fresh_generation() -
     let mut tx = provisioning_transaction(&mut project).await?;
     let plain_id: Uuid = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-         VALUES ('plain','http','none',gen_random_uuid(),1,gen_random_uuid()) RETURNING id",
+         VALUES ('plain','http','none',uuidv7(),1,uuidv7()) RETURNING id",
     )
     .fetch_one(&mut *tx)
     .await?;

@@ -57,7 +57,7 @@ pub async fn provision_org(
         .await
         .context("connect to the system database for org provisioning")?;
     let command = Command {
-        id: sqlx::query_scalar("SELECT gen_random_uuid()")
+        id: sqlx::query_scalar("SELECT uuidv7()")
             .fetch_one(&mut connection)
             .await
             .context("allocate the org provisioning command ID")?,

@@ -153,7 +153,13 @@ async fn apply(
     .execute(&mut *tx)
     .await?;
     let table = crate::project_migration::history_table(project_env_key, &package_id);
-    wamn_postgres::migrations::prepare_history(&mut tx, &table, &login).await?;
+    wamn_postgres::migrations::prepare_history(
+        &mut tx,
+        wamn_postgres::migration_scope::MigrationDatabase::Project,
+        &table,
+        &login,
+    )
+    .await?;
     ensure_model_schemas(&mut tx, &plan, &login).await?;
     tx.commit().await?;
     let migrations_applied =

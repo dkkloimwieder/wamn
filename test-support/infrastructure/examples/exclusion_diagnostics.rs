@@ -121,10 +121,11 @@ async fn main() -> anyhow::Result<()> {
         std::fs::copy(root.join(name), destination)?;
     }
     let server = containers::start_postgres().await?;
-    let database = server.create_database("exclusion_diagnostics").await?;
+    let database =
+        wamn_test_infrastructure::identity::project(&server, "exclusion_diagnostics").await;
     let mut client = wamn_postgres::connect(database.as_str()).await?;
 
-    sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;
+    sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;
     sqlx::raw_sql(include_str!(
         "../../../apps/platform_fixture/migrations/0001_initial.sql"
     ))

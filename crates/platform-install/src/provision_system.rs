@@ -284,6 +284,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 .await?;
             wamn_postgres::migrations::prepare_history(
                 admin,
+                MigrationDatabase::System,
                 wamn_postgres::REGISTRY_HISTORY_TABLE,
                 &wamn_role::SYSTEM_ROLE.parse()?,
             )

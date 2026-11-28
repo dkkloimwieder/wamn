@@ -468,6 +468,7 @@ async fn org_activity_controls_new_commands_and_password_logins() -> anyhow::Res
 
 async fn mirror_databases(
     postgres: &wamn_test_infrastructure::containers::Postgres,
+    principal: PrincipalId,
 ) -> anyhow::Result<[PgConnectOptions; 2]> {
     let alpha = postgres.create_project_database("activity_alpha").await?;
     let mut cluster = wamn_postgres::connect(postgres.admin_url()).await?;
@@ -482,6 +483,17 @@ async fn mirror_databases(
     for options in [alpha, beta] {
         let mut migration = wamn_postgres::connect(options).await?;
         wamn_env::platform_migrations::install_project(&mut migration).await?;
+        let mut transaction =
+            wamn_postgres::provisioning_transaction::provisioning_transaction(&mut migration)
+                .await?;
+        sqlx::query(
+            r#"INSERT INTO platform."user" (id, issuer, sub, type, email)
+               VALUES ($1, 'https://fixture.invalid', 'mirror-admin', 'user', 'mirror-admin@fixture.invalid')"#,
+        )
+        .bind(uuid::Uuid::from(principal))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
     }
     Ok([
         postgres
@@ -551,7 +563,7 @@ async fn project_deactivation_refuses_access_and_preserves_its_sibling() -> anyh
     let mut projection = wamn_postgres::connect(&control_url).await?;
     let alpha_target = Triple::new(org.clone(), "dev".parse()?, "alpha".parse()?);
     let beta_target = Triple::new(org.clone(), "dev".parse()?, "beta".parse()?);
-    let [alpha_db, beta_db] = mirror_databases(&postgres).await?;
+    let [alpha_db, beta_db] = mirror_databases(&postgres, principal).await?;
     let mut mirrors = [
         wamn_postgres::connect(alpha_db.clone()).await?,
         wamn_postgres::connect(beta_db.clone()).await?,
@@ -749,11 +761,19 @@ impl OAuthRefreshFixture {
         let mut admin = database.admin().await?;
         let mut tx =
             wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+        let principal: uuid::Uuid = sqlx::query_scalar(
+            r#"INSERT INTO platform."user" (id, issuer, sub, type, email)
+               VALUES (uuidv7(), 'wamn', 'oauth-refresh', 'service', 'oauth-refresh@fixture.invalid')
+               RETURNING id"#,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
         let connection = sqlx::query_scalar(
             "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-             VALUES ('billing','http','oauth2_client_credentials',gen_random_uuid(),1,gen_random_uuid())
+             VALUES ('billing','http','oauth2_client_credentials',uuidv7(),1,$1)
              RETURNING id",
         )
+        .bind(principal)
         .fetch_one(&mut *tx)
         .await?;
         sqlx::query(
@@ -766,7 +786,7 @@ impl OAuthRefreshFixture {
         Ok(Self {
             database,
             connection,
-            principal: PrincipalId::from(uuid::Uuid::new_v4()),
+            principal: PrincipalId::from(principal),
         })
     }
 
@@ -1035,7 +1055,7 @@ async fn oauth_callback_records_a_provider_refusal_without_consuming_state() -> 
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
     let connection: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-         VALUES ('orders','http','oauth2_authorization_code',gen_random_uuid(),1,gen_random_uuid())
+         VALUES ('orders','http','oauth2_authorization_code',uuidv7(),1,uuidv7())
          RETURNING id",
     )
     .fetch_one(&mut *tx)
@@ -1047,7 +1067,13 @@ async fn oauth_callback_records_a_provider_refusal_without_consuming_state() -> 
     .execute(&mut *tx)
     .await?;
     let state = "billing/dev/fixture-state";
-    let principal = uuid::Uuid::new_v4();
+    let principal: uuid::Uuid = sqlx::query_scalar(
+        r#"INSERT INTO platform."user" (id, issuer, sub, type, email)
+           VALUES (uuidv7(), 'https://fixture.invalid', 'oauth-owner', 'user', 'oauth-owner@fixture.invalid')
+           RETURNING id"#,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query(
         "INSERT INTO platform.oauth_authorization
              (state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)

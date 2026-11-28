@@ -228,7 +228,7 @@ BEGIN
     'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
     'INSERT INTO platform.setting (target_type, target_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
-    'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
+    'INSERT INTO platform.external_system (id,name) VALUES (uuidv7(),''forged'')',
     'DELETE FROM platform.connection',
     'INSERT INTO platform.env (active) VALUES (true)',
     'UPDATE platform.env SET active = true',

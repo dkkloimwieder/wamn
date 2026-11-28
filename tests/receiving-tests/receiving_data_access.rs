@@ -16,11 +16,7 @@ mod tests {
     const MANIFEST: &str = "wamn_receiving/wamn.json";
     const OVERLAY_MANIFEST: &str = "client_acme_receiving/wamn.json";
     const MIGRATION: &str = include_str!("../../apps/wamn_receiving/migrations/0001_initial.sql");
-    const RECORD_HISTORY_SQL: &str = include_str!("../../deploy/sql/record-history.sql");
-    const RECORD_HISTORY_APP_GRANTS_SQL: &str =
-        include_str!("../../deploy/sql/record-history-app-grants.sql");
-    /// The test principal that the fixture writes as. This SQL-only fixture has
-    /// no `platform` schema, and no stamp column reads a user row.
+    /// The test principal that the fixture writes as.
     const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
     /// A second principal, so a stamp shows which write set it.
     const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);
@@ -161,20 +157,14 @@ mod tests {
         use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
 
         let server = wamn_test_infrastructure::containers::start_postgres().await?;
-        let url = server.create_database("receiving").await?.to_string();
+        let url = install_project(&server).await?;
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
-        // Each actor uses its own transaction in this private database.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            ("BEGIN; CREATE SCHEMA receiving; \
-             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS")
-                .to_string(),
-        ))
-        .execute(&mut client)
-        .await
-        .map(drop)?;
+        sqlx::raw_sql("CREATE SCHEMA receiving")
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
             .execute(&mut client)
             .await
@@ -368,14 +358,7 @@ mod tests {
         // The product installs the project schemas, which the commands bind
         // their identity in.
         let server = wamn_test_infrastructure::containers::start_postgres().await?;
-        let migration = server.create_project_database("receiving").await?;
-        wamn_env::platform_migrations::install_project(
-            &mut wamn_postgres::connect(migration.as_str()).await?,
-        )
-        .await?;
-        let mut url = url::Url::parse(server.admin_url())?;
-        url.set_path("receiving");
-        let url = url.to_string();
+        let url = install_project(&server).await?;
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
@@ -502,9 +485,33 @@ mod tests {
         Ok(())
     }
 
-    /// Install the platform record-history functions, and the history tables and
-    /// triggers that apply-package derives from the `audit_log` declarations of
-    /// one package manifest.
+    async fn install_project(
+        server: &wamn_test_infrastructure::containers::Postgres,
+    ) -> Result<String> {
+        let migration = server.create_project_database("receiving").await?;
+        wamn_env::platform_migrations::install_project(
+            &mut wamn_postgres::connect(migration.as_str()).await?,
+        )
+        .await?;
+        let mut url = url::Url::parse(server.admin_url())?;
+        url.set_path("receiving");
+        let mut client = connect(url.as_str()).await?;
+        let mut transaction =
+            wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
+        sqlx::query(
+            r#"INSERT INTO platform."user" (id, issuer, sub, type, email) VALUES
+               ($1, 'https://fixture.invalid', 'receiving-fixture', 'user', 'receiving-fixture@fixture.invalid'),
+               ($2, 'https://fixture.invalid', 'receiving-command', 'user', 'receiving-command@fixture.invalid')"#,
+        )
+        .bind(FIXTURE_PRINCIPAL)
+        .bind(COMMAND_PRINCIPAL)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(url.into())
+    }
+
+    /// Install the history tables and triggers for one package's audit declarations.
     async fn install_record_history(client: &mut Client, manifest: &[u8]) -> Result<()> {
         let manifest: wamn_component_policy::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
@@ -537,13 +544,7 @@ mod tests {
                 )
             })
         });
-        let sql = [RECORD_HISTORY_SQL, RECORD_HISTORY_APP_GRANTS_SQL]
-            .into_iter()
-            .map(str::to_owned)
-            .chain(triggers)
-            .chain(logs)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let sql = triggers.chain(logs).collect::<Vec<_>>().join("\n");
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut *client)
             .await

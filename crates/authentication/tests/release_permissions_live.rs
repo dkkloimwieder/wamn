@@ -228,7 +228,7 @@ async fn role_deactivation_and_activation_apply_on_the_next_grant_read() {
     let key = wamn_registry::project_env_key(&app.org, &app.project, &app.env);
     let user = change!(client, |tx| sqlx::query_scalar::<_, uuid::Uuid>(
         r#"INSERT INTO platform."user" (id, issuer, sub, type, email)
-           VALUES (gen_random_uuid(), 'https://role-test.invalid', 'clerk', 'user', 'clerk@example.invalid')
+           VALUES (uuidv7(), 'https://role-test.invalid', 'clerk', 'user', 'clerk@example.invalid')
            RETURNING id"#,
     )
     .fetch_one(&mut *tx))

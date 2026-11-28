@@ -168,7 +168,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ('{U2}','wamn','{U2}','service','u2@t1'),\n\
            ('{U3}','https://fixture.example','{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
-         INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');\n\
+         INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U2}','admin');\n\
          INSERT INTO platform.permission (role_name, permission) VALUES ('clerk','platform-fixture:widget/get');\n\
          INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
@@ -266,7 +266,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
              ASSERT false, 'an assigned role cannot be deleted';
            EXCEPTION WHEN restrict_violation THEN NULL; END;
            BEGIN
-             DELETE FROM platform.\"user\" WHERE id = '{U1}';
+             DELETE FROM platform.\"user\" WHERE id = '{U2}';
              ASSERT false, 'a user with a role assignment cannot be deleted';
            EXCEPTION WHEN restrict_violation THEN NULL; END;
          END $$;"
@@ -377,7 +377,7 @@ VALUES ('11111111-1111-1111-1111-111111111111', '0123456789abcdef',
 WITH connection AS (
   INSERT INTO platform.connection
     (name, integration_type, auth_type, target_id, active_generation, service_principal_id)
-  VALUES ('fixture', 'http', 'api_key', gen_random_uuid(), 1, gen_random_uuid())
+  VALUES ('fixture', 'http', 'api_key', uuidv7(), 1, uuidv7())
   RETURNING id
 ), credential AS (
   INSERT INTO platform.credential (connection_id, store, ref, version)
@@ -640,14 +640,14 @@ async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_p
     }
 }
 
-const HISTORY_PROBE: &str = r"
+const HISTORY_PROBE: &str = r#"
 CREATE TABLE public.history_probe (
     id integer PRIMARY KEY,
     amount numeric NOT NULL,
     created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL
+    updated_by uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT
 );
 SELECT wamn_history.create_history_table('public', 'history_probe', false);
 CREATE TRIGGER history_stamp BEFORE INSERT OR UPDATE ON public.history_probe
@@ -655,7 +655,7 @@ CREATE TRIGGER history_stamp BEFORE INSERT OR UPDATE ON public.history_probe
         'created_at', 'created_by', 'updated_at', 'updated_by');
 CREATE TRIGGER history_log AFTER INSERT OR UPDATE OR DELETE ON public.history_probe
     FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
-";
+"#;
 
 const HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000a";
 const OTHER_HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000b";
@@ -663,6 +663,16 @@ const OTHER_HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000b";
 fn install_history_probe(url: &str) {
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str(wamn_env::project_setup::CATALOG_SCHEMA_SQL);
+    script.push_str(wamn_env::project_setup::APP_SCHEMA_SQL);
+    write!(
+        script,
+        r#"
+INSERT INTO platform."user" (id, issuer, sub, type, email) VALUES
+    ('{HISTORY_ACTOR}', 'https://fixture.invalid', 'history', 'user', 'history@fixture.invalid'),
+    ('{OTHER_HISTORY_ACTOR}', 'https://fixture.invalid', 'other-history', 'user', 'other-history@fixture.invalid');
+"#
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(HISTORY_PROBE);
     run(url, &script);
 }
@@ -907,7 +917,7 @@ DO $$ BEGIN
     BEGIN
         INSERT INTO public.history_probe_history
             (row_key, type, operation, changed_by, changed_at, transaction_id, before, after)
-        VALUES ('{}', 'upsert', 'admin:probe', gen_random_uuid(), now(), 1, '{}', '{}');
+        VALUES ('{}', 'upsert', 'admin:probe', uuidv7(), now(), 1, '{}', '{}');
         ASSERT false, 'invalid history entry type';
     EXCEPTION WHEN check_violation THEN NULL;
     END;
@@ -929,6 +939,7 @@ async fn run_queue_stamps_scheduled_runs() {
 {}
 {}
 {}
+{}
 BEGIN;
 {}
 INSERT INTO wamn_run.run
@@ -946,6 +957,7 @@ COMMIT;
 ",
         wamn_env::project_setup::ensure_project_roles_sql(),
         wamn_env::project_setup::CATALOG_SCHEMA_SQL,
+        wamn_env::project_setup::APP_SCHEMA_SQL,
         include_str!("../../../deploy/sql/run-state.sql"),
         include_str!("../../../deploy/sql/run-queue.sql"),
         wamn_postgres::bind_platform_principal_sql(wamn_principal::PlatformComponent::Provisioning),

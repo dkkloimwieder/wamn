@@ -24,8 +24,6 @@ const RECEIPTS_PER_WORKER_SECOND: u64 = 50;
 const SEED_ITEM: &str = "00000000-0000-0000-0000-00000000b710";
 const SEED_LOCATION: &str = "00000000-0000-0000-0000-00000000b711";
 const SEED_SUPPLIER: &str = "00000000-0000-0000-0000-00000000b730";
-/// The audit principal of the seeded rows.
-const SEED_PRINCIPAL: &str = "00000000-0000-0000-0000-000000000000";
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -506,12 +504,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 /// Seed enough receipts for multiple list pages, and return one get target.
 async fn seed_app_path(database: &mut sqlx::PgConnection) -> anyhow::Result<String> {
     let mut transaction = sqlx::Connection::begin(database).await?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES($1::text::uuid,'','benchmark','admin:benchmark-app-path')")
-        .bind(SEED_PRINCIPAL).execute(&mut *transaction).await?;
+    bind_seed_actor(&mut transaction, "benchmark", "admin:benchmark-app-path").await?;
     let row = sqlx::query(
         "WITH inserted AS ( \
              INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
-             SELECT purchase_order.id, gen_random_uuid()::text, now() \
+             SELECT purchase_order.id, uuidv7()::text, now() \
              FROM receiving.purchase_order ORDER BY purchase_order.id LIMIT 100 \
              RETURNING id::text) SELECT id FROM inserted LIMIT 1",
     )
@@ -520,6 +517,23 @@ async fn seed_app_path(database: &mut sqlx::PgConnection) -> anyhow::Result<Stri
     .context("seed the application-path receipt")?;
     transaction.commit().await?;
     Ok(row.get(0))
+}
+
+async fn bind_seed_actor(
+    transaction: &mut sqlx::PgConnection,
+    app: &str,
+    operation: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"INSERT INTO platform.tx_identity (principal_id, role, app, operation)
+           VALUES ((SELECT id FROM platform."user"
+                    WHERE issuer = 'wamn:platform' AND display_name = 'wamn:provisioning'), '', $1, $2)"#,
+    )
+    .bind(app)
+    .bind(operation)
+    .execute(transaction)
+    .await?;
+    Ok(())
 }
 
 const MIX_CALLS: [Call; 7] = [
@@ -853,16 +867,16 @@ async fn seed_receipts(
     contention: bool,
     lines: u16,
 ) -> anyhow::Result<Vec<Receipt>> {
+    let mut transaction = sqlx::Connection::begin(database).await?;
+    bind_seed_actor(&mut transaction, "fixture", "admin:benchmark-seed").await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "BEGIN; \
-             INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{SEED_PRINCIPAL}'::text::uuid,'','fixture','admin:benchmark-seed'); \
-             INSERT INTO receiving.item (id, item_number) VALUES ('{SEED_ITEM}', 'ITEM-BENCH') \
+            "INSERT INTO receiving.item (id, item_number) VALUES ('{SEED_ITEM}', 'ITEM-BENCH') \
                ON CONFLICT DO NOTHING; \
              INSERT INTO receiving.location (id, location_code) VALUES ('{SEED_LOCATION}', 'BENCH') \
                ON CONFLICT DO NOTHING; \
              INSERT INTO receiving.supplier (id, name) VALUES ('{SEED_SUPPLIER}', 'SUPPLIER-BENCH') \
                ON CONFLICT DO NOTHING;"
-        ))).execute(&mut *database).await.map(drop)
+        ))).execute(&mut *transaction).await.map(drop)
         .context("seed the item, location and supplier")?;
     let count = i32::try_from(count).context("the seed count fits an int4")?;
     let orders = if contention { 4 } else { count };
@@ -877,24 +891,23 @@ async fn seed_receipts(
                 "WITH orders AS ( \
                    INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, \
                      status, row_version{extra_columns}) \
-                   SELECT gen_random_uuid(), $1::text || n::text, '{SEED_SUPPLIER}', 'open', 1{extra_values} \
+                   SELECT uuidv7(), $1::text || n::text, '{SEED_SUPPLIER}', 'open', 1{extra_values} \
                    FROM generate_series(1, $2::int4) AS n \
                    RETURNING id), \
                  seeded AS ( \
                    INSERT INTO receiving.purchase_order_line (id, purchase_order_id, line_number, \
                      item_id, ordered_quantity, received_quantity) \
-                   SELECT gen_random_uuid(), id, line, '{SEED_ITEM}', $3::int4, 0 \
+                   SELECT uuidv7(), id, line, '{SEED_ITEM}', $3::int4, 0 \
                    FROM orders CROSS JOIN generate_series(1, $4::int4) AS line \
                    RETURNING purchase_order_id, id) \
                  SELECT purchase_order_id::text, array_agg(id::text ORDER BY id) \
                  FROM seeded GROUP BY purchase_order_id"
-            ))).bind(prefix).bind(orders).bind(quantity).bind(i32::from(lines)).fetch_all(&mut *database)
+            ))).bind(prefix).bind(orders).bind(quantity).bind(i32::from(lines)).fetch_all(&mut *transaction)
         .await
         .context("seed the purchase orders")?;
-    sqlx::raw_sql("COMMIT")
-        .execute(&mut *database)
+    transaction
+        .commit()
         .await
-        .map(drop)
         .context("commit the receipt seed")?;
     Ok(rows
         .iter()

@@ -306,7 +306,6 @@ fn seeds(org: &Org<'_>, env: &str, command: Option<&str>) -> Vec<Seed> {
     let target = [("org", name), ("project", PROJECT), ("env", env)];
     let at_target = |columns: &[(&'static str, &'static str)]| [&target[..], columns].concat();
     vec![
-        Seed::new("registry.org", &[("id", name)]),
         Seed::new(
             "identity.principal",
             &[
@@ -317,6 +316,7 @@ fn seeds(org: &Org<'_>, env: &str, command: Option<&str>) -> Vec<Seed> {
                 ("display_name", "Owner"),
             ],
         ),
+        Seed::new("registry.org", &[("id", name)]),
         Seed::new(
             "identity.org_membership",
             &[
@@ -1022,7 +1022,7 @@ async fn env_worker_reaches_only_its_own_env() -> Result<()> {
 
     let org_event = format!(
         "INSERT INTO provisioning.platform_event (command_id, event_type, outcome, principal_id, org)
-         VALUES (gen_random_uuid(), 'env_apply', 'started', '{HOME_PRINCIPAL}', '{}')", home.name,
+         VALUES (uuidv7(), 'env_apply', 'started', '{HOME_PRINCIPAL}', '{}')", home.name,
     );
     expect_code(
         attempt(&mut connection, &home.principal, &org_event).await?,

@@ -61,7 +61,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
         "SELECT FROM platform.tx_identity",
         "SELECT FROM platform.login_principal",
         "INSERT INTO platform.login_principal (login, principal_id) \
-         VALUES (current_user, gen_random_uuid())",
+         VALUES (current_user, uuidv7())",
         "UPDATE platform.tx_identity SET role = role",
         "DELETE FROM platform.tx_identity",
         "TRUNCATE platform.tx_identity",

@@ -51,7 +51,7 @@ async fn fixture_connection(
 ) -> sqlx::Result<Uuid> {
     let id = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-         VALUES ($1,$2,'none',gen_random_uuid(),1,gen_random_uuid()) RETURNING id",
+         VALUES ($1,$2,'none',uuidv7(),1,uuidv7()) RETURNING id",
     )
     .bind(name)
     .bind(integration)

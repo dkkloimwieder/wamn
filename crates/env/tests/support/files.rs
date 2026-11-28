@@ -138,7 +138,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     sqlx::query(
         "WITH connection AS (INSERT INTO platform.connection \
              (id,name,integration_type,auth_type,target_id,service_principal_id,active_generation) \
-             VALUES ($1::text::uuid,'file-store','s3','custom',gen_random_uuid(),$2::text::uuid,1) \
+             VALUES ($1::text::uuid,'file-store','s3','custom',uuidv7(),$2::text::uuid,1) \
              RETURNING id,active_generation) \
          INSERT INTO platform.connection_generation (connection_id,generation) \
          SELECT id,active_generation FROM connection",

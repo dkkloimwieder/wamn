@@ -47,9 +47,9 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             .await;
             for batch in [
                 wamn_env::project_setup::CATALOG_SCHEMA_SQL,
+                wamn_env::project_setup::APP_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
-                wamn_env::project_setup::APP_SCHEMA_SQL,
                 "RESET ROLE",
             ] {
                 execute(&mut admin, batch).await;

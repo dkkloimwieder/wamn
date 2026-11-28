@@ -12,7 +12,7 @@ async fn record_refuses_external_system_deletion() -> anyhow::Result<()> {
 
     sqlx::raw_sql(
         "CREATE SCHEMA platform;
-         CREATE TABLE platform.external_system(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
+         CREATE TABLE platform.external_system(id uuid PRIMARY KEY DEFAULT uuidv7(), name text UNIQUE);
          CREATE TABLE platform.record_source(external_system_id uuid REFERENCES platform.external_system(id));
          INSERT INTO platform.external_system (name) VALUES ('source');
          INSERT INTO platform.record_source SELECT id FROM platform.external_system WHERE name='source';",

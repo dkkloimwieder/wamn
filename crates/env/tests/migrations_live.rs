@@ -3,6 +3,7 @@
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 use wamn_env::project_migration;
+use wamn_postgres::migration_scope::MigrationDatabase;
 use wamn_postgres::migrations;
 
 fn source(version: i64, sql: &str) -> Migration {
@@ -32,6 +33,9 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
     sqlx::raw_sql(wamn_env::project_setup::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
+    sqlx::raw_sql(wamn_env::project_setup::APP_SCHEMA_SQL)
+        .execute(&mut admin)
+        .await?;
     let component = wamn_principal::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(uuid::Uuid::from(component.principal_id()))
@@ -41,13 +45,25 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
         &"fixture--dev--one".parse().unwrap(),
         &"orders".parse().unwrap(),
     );
-    migrations::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
+    migrations::prepare_history(
+        &mut admin,
+        MigrationDatabase::Project,
+        &table,
+        &"postgres".parse().unwrap(),
+    )
+    .await?;
     let first = source(
         10,
-        "CREATE TABLE public.migration_effect(id int PRIMARY KEY, created_at timestamptz NOT NULL, created_by uuid NOT NULL, updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);
+        r#"CREATE TABLE public.migration_effect(
+            id int PRIMARY KEY,
+            created_at timestamptz NOT NULL,
+            created_by uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT,
+            updated_at timestamptz NOT NULL,
+            updated_by uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT
+        );
         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON public.migration_effect FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at','created_by','updated_at','updated_by');
         SELECT wamn_history.create_history_table('public','migration_effect',false);
-        CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON public.migration_effect FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');",
+        CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON public.migration_effect FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');"#,
     );
     let failing = source(
         30,

@@ -110,7 +110,7 @@ pub async fn apply_target(
     let key = lock_session(client, lock, &[]).await?;
     let result = async {
         let table = format!("{schema}._sqlx_migrations");
-        prepare_history(client, &table, &login).await?;
+        prepare_history(client, database, &table, &login).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} OWNER TO {owner}"
         )))
@@ -133,6 +133,7 @@ pub async fn apply_target(
 /// Only SQLx's elapsed-time update remains writable after insertion.
 pub async fn prepare_history(
     connection: &mut sqlx::PgConnection,
+    database: MigrationDatabase,
     table: &str,
     login: &wamn_role::LoginName,
 ) -> anyhow::Result<()> {
@@ -141,6 +142,10 @@ pub async fn prepare_history(
         .fetch_one(&mut *connection)
         .await?;
     if !exists {
+        let principal_table = match database {
+            MigrationDatabase::System => "identity.principal",
+            MigrationDatabase::Project => r#"platform."user""#,
+        };
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE TABLE {table} (
             version BIGINT PRIMARY KEY,
             description TEXT NOT NULL,
@@ -149,9 +154,9 @@ pub async fn prepare_history(
             checksum BYTEA NOT NULL,
             execution_time BIGINT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL,
-            created_by UUID NOT NULL,
+            created_by UUID NOT NULL REFERENCES {principal_table} (id) ON DELETE RESTRICT,
             updated_at TIMESTAMPTZ NOT NULL,
-            updated_by UUID NOT NULL
+            updated_by UUID NOT NULL REFERENCES {principal_table} (id) ON DELETE RESTRICT
         );
         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {table}
             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at','created_by','updated_at','updated_by');

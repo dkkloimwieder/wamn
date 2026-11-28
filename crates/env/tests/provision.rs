@@ -32,9 +32,9 @@ async fn the_platform_extensions_make_an_exclusion_constraint_reachable() -> any
     sqlx::raw_sql(OVERLAP_PROBE_TABLE)
         .execute(&mut connection)
         .await?;
-    sqlx::query("INSERT INTO overlap_probe.appointment VALUES (gen_random_uuid(), $1::uuid, tstzrange('2026-10-01 09:00Z','2026-10-01 10:00Z'))")
+    sqlx::query("INSERT INTO overlap_probe.appointment VALUES (uuidv7(), $1::uuid, tstzrange('2026-10-01 09:00Z','2026-10-01 10:00Z'))")
         .bind("11111111-1111-1111-1111-111111111111").execute(&mut connection).await?;
-    let overlap = sqlx::query("INSERT INTO overlap_probe.appointment VALUES (gen_random_uuid(), $1::uuid, tstzrange('2026-10-01 09:30Z','2026-10-01 10:30Z'))")
+    let overlap = sqlx::query("INSERT INTO overlap_probe.appointment VALUES (uuidv7(), $1::uuid, tstzrange('2026-10-01 09:30Z','2026-10-01 10:30Z'))")
         .bind("11111111-1111-1111-1111-111111111111").execute(&mut connection).await.unwrap_err();
     assert_eq!(
         overlap

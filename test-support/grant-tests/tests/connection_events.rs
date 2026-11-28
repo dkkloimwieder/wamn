@@ -12,7 +12,7 @@ async fn project_connection_event_grants_and_immutability() -> anyhow::Result<()
     let mut tx = provisioning_transaction(&mut admin).await?;
     let connection: sqlx::types::Uuid = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
-         VALUES ('orders','http','none',gen_random_uuid(),1,gen_random_uuid()) RETURNING id",
+         VALUES ('orders','http','none',uuidv7(),1,uuidv7()) RETURNING id",
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -29,7 +29,7 @@ async fn project_connection_event_grants_and_immutability() -> anyhow::Result<()
     let mut platform = wamn_postgres::connect(url.as_str()).await?;
     sqlx::query(
         "INSERT INTO platform.connection_event (connection_id,generation,principal_id,event_type,outcome)
-         VALUES ($1,1,gen_random_uuid(),'activate','succeeded')",
+         VALUES ($1,1,uuidv7(),'activate','succeeded')",
     )
     .bind(connection)
     .execute(&mut platform)
